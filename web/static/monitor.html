@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>实时监控 - 人员距离速度</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>实时距离速度检测</h1>
+      <p>YOLO 检测 + 距摄像头距离 / 速度 / 靠近远离</p>
+    </div>
+    <nav class="nav-tabs">
+      <a href="/" class="nav-tab">标定</a>
+      <a href="/monitor" class="nav-tab active">实时监控</a>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <div class="canvas-panel">
+      <div class="toolbar">
+        <button type="button" class="btn btn-primary" id="startBtn">开始检测</button>
+        <button type="button" class="btn btn-danger" id="stopBtn" disabled>停止</button>
+        <span id="fpsBadge" class="badge">FPS: -</span>
+        <span id="detectBadge" class="badge">未运行</span>
+      </div>
+
+      <div id="messageBox" class="alert alert-error" hidden></div>
+
+      <div class="video-wrap">
+        <img id="liveStream" alt="实时画面" hidden>
+        <div id="streamPlaceholder" class="placeholder">
+          <p>点击「开始检测」查看实时画面</p>
+          <p style="font-size:0.85rem;margin-top:8px">需先完成标定</p>
+        </div>
+      </div>
+    </div>
+
+    <aside class="sidebar">
+      <h2>当前人员</h2>
+      <ul id="personList" class="point-list">
+        <li class="point-item" style="color:var(--text-muted)">暂无检测</li>
+      </ul>
+
+      <h2>说明</h2>
+      <ol class="steps">
+        <li>距摄像头 = O 点到脚点的地面距离</li>
+        <li><span style="color:#ef4444">红色</span> = 靠近摄像头</li>
+        <li><span style="color:#22c55e">绿色</span> = 远离摄像头</li>
+        <li>灰色 = 静止</li>
+      </ol>
+    </aside>
+  </div>
+
+  <script src="/static/monitor.js"></script>
+</body>
+</html>

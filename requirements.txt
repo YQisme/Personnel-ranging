@@ -1,0 +1,9 @@
+ultralytics>=8.3.115
+opencv-python>=4.8.0
+numpy>=1.24.0
+filterpy>=1.4.5
+pyyaml>=6.0
+pillow>=10.0.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
+python-multipart>=0.0.9

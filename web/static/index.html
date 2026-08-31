@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>摄像机距离链标定</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>摄像机距离链标定</h1>
+      <p>在画面上标定可见地面点，输入卷尺实测的距 O 距离</p>
+    </div>
+    <nav class="nav-tabs">
+      <a href="/" class="nav-tab active">标定</a>
+      <a href="/monitor" class="nav-tab">实时监控</a>
+    </nav>
+    <span id="statusBadge" class="badge">未标定</span>
+  </header>
+
+  <div class="layout">
+    <div class="canvas-panel">
+      <div class="toolbar">
+        <button type="button" class="btn btn-primary" id="captureBtn">从视频源抓拍</button>
+        <button type="button" class="btn" id="uploadBtn">上传图片</button>
+        <input type="file" id="uploadInput" accept="image/*">
+        <button type="button" class="btn" id="importBtn">导入已有标定</button>
+        <button type="button" class="btn btn-danger" id="resetBtn">重置标定点</button>
+        <button type="button" class="btn" id="validateBtn" disabled>验证</button>
+        <button type="button" class="btn btn-primary" id="saveBtn" disabled>保存标定</button>
+      </div>
+
+      <div id="messageBox" class="alert alert-success" hidden></div>
+
+      <div id="canvasWrap" class="canvas-wrap empty">
+        <div id="placeholder" class="placeholder">
+          <p>请先「从视频源抓拍」或「上传图片」</p>
+          <p style="font-size:0.85rem;margin-top:8px">视频源: <span id="videoSource">-</span></p>
+        </div>
+        <canvas id="calibCanvas" hidden></canvas>
+      </div>
+    </div>
+
+    <aside class="sidebar">
+      <h2>标定步骤</h2>
+      <div class="alert alert-warning" style="margin-bottom:12px">
+        O 点是摄像头地面投影的<strong>坐标原点</strong>，通常<strong>不在画面内</strong>（在镜头正下方、画面外）。无需在画面上点击 O，只需标定<strong>能看见的地面点</strong>。
+      </div>
+      <ol class="steps">
+        <li><strong>1.</strong> 抓拍或上传监控画面</li>
+        <li><strong>2.</strong> 在地面用卷尺从 O 点量出距离（如 5m、10m、15m、20m）</li>
+        <li><strong>3.</strong> 在画面上点击该地面位置，输入实测距离</li>
+        <li><strong>4.</strong> 建议加左右横向偏移点提高精度</li>
+        <li><strong>5.</strong> 至少 4 个点后保存</li>
+      </ol>
+
+      <h2>标定点列表</h2>
+      <ul id="pointList" class="point-list"></ul>
+
+      <h2>验证结果</h2>
+      <div id="verifyBox" hidden></div>
+    </aside>
+  </div>
+
+  <div id="pointModal" class="modal-overlay hidden">
+    <div class="modal">
+      <h3 id="modalTitle">标定点</h3>
+      <p id="modalPixel" style="color:#8b9cb3;font-size:0.9rem;margin-bottom:16px"></p>
+      <div class="field">
+        <label for="distanceInput">该点距 O 的地面距离 (米)</label>
+        <input type="number" id="distanceInput" min="0.1" step="0.1" placeholder="卷尺实测，如 5、10、15、20">
+      </div>
+      <div class="field">
+        <label for="lateralInput">横向偏移 (米)</label>
+        <input type="number" id="lateralInput" step="0.1" value="0" placeholder="左负右正，默认 0">
+        <div class="hint">点在主视野正前方线上为 0；偏左/偏右填实测横向距离</div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="modalCancel">取消</button>
+        <button type="button" class="btn btn-primary" id="modalConfirm">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=3"></script>
+</body>
+</html>

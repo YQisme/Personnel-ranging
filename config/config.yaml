@@ -1,0 +1,52 @@
+# 海康摄像头 RTSP 配置
+camera:
+  # 示例: rtsp://admin:password@192.168.1.64:554/Streaming/Channels/101
+  rtsp_url: "rtsp://192.168.0.13:8554/camera1"
+  # 也可使用本地视频文件进行测试
+  video_file: ""
+  width: 1920
+  height: 1080
+  fps: 25
+  # RTSP 传输协议 tcp 更稳定
+  rtsp_transport: tcp
+  # 连续读帧失败多少次后重连
+  max_read_fails: 5
+  reconnect_delay: 2
+
+# YOLO 检测配置
+detection:
+  model: "yolov8n.pt"
+  confidence: 0.5
+  classes: [0]  # 0 = person
+  imgsz: 640    # 推理分辨率，降低可提速（主码流 1080p 时建议 640）
+  skip_frames: 0  # 每帧推理；设为 1 则跳过 1 帧读最新画面
+
+# ByteTrack 跟踪配置
+tracking:
+  tracker: "bytetrack.yaml"
+  persist: true
+
+# 摄像机标定
+# 距离定义: 摄像头地面投影点 O(0,0) → 人员脚点的地面距离 D = sqrt(X²+Y²)
+# 使用 calibrate.py 标定: 先点 O，再沿地面距离链标定 5m/10m/15m/20m...
+calibration:
+  homography_file: "config/homography_matrix.npy"
+
+# 运动分析参数
+motion:
+  # 速度计算滑动窗口 (秒)
+  speed_window_seconds: 1.0
+  # 距离变化阈值 (米)，小于此值视为静止
+  distance_threshold: 0.3
+  # 方向判断需要连续满足的采样次数
+  direction_confirm_frames: 5
+  # 卡尔曼滤波过程噪声
+  kalman_process_noise: 0.1
+  kalman_measurement_noise: 1.0
+
+# 输出配置
+output:
+  show_window: true
+  save_video: false
+  video_output: "output/result.mp4"
+  json_output: "output/events.json"
