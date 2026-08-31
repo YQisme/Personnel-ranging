@@ -3,13 +3,15 @@
 import cv2
 
 from src.motion_analyzer import MotionDirection, PersonMotionState
-from src.text_draw import draw_texts
+
+_FONT = cv2.FONT_HERSHEY_SIMPLEX
+_LINE_GAP = 22
 
 DIRECTION_LABELS = {
-    MotionDirection.STATIONARY: "静止",
-    MotionDirection.APPROACHING: "靠近摄像头",
-    MotionDirection.RETREATING: "远离摄像头",
-    MotionDirection.UNKNOWN: "未知",
+    MotionDirection.STATIONARY: "Stationary",
+    MotionDirection.APPROACHING: "Approaching",
+    MotionDirection.RETREATING: "Retreating",
+    MotionDirection.UNKNOWN: "Unknown",
 }
 
 DIRECTION_COLORS = {
@@ -18,6 +20,15 @@ DIRECTION_COLORS = {
     MotionDirection.RETREATING: (0, 255, 0),
     MotionDirection.UNKNOWN: (255, 255, 0),
 }
+
+
+def _put_lines(frame, lines: list[str], x: int, y: int, color, font_scale: float = 0.55):
+    text_y = y
+    for line in lines:
+        text_y -= _LINE_GAP
+        cv2.putText(
+            frame, line, (x, text_y), _FONT, font_scale, color, 2, cv2.LINE_AA,
+        )
 
 
 def draw_person_info(frame, state: PersonMotionState):
@@ -30,22 +41,14 @@ def draw_person_info(frame, state: PersonMotionState):
     cv2.circle(frame, (foot_x, foot_y), 6, (0, 255, 255), -1)
     cv2.circle(frame, (foot_x, foot_y), 8, color, 2)
 
-    direction_text = DIRECTION_LABELS.get(state.direction, "未知")
+    direction_text = DIRECTION_LABELS.get(state.direction, "Unknown")
     lines = [
         f"#{state.person_id}",
-        f"距摄像头 {state.distance:.2f}m",
-        f"速度 {state.speed:.2f}m/s ({state.speed_kmh:.1f}km/h)",
-        f"状态: {direction_text}",
+        f"Dist {state.distance:.2f}m",
+        f"Speed {state.speed:.2f}m/s ({state.speed_kmh:.1f}km/h)",
+        direction_text,
     ]
-
-    text_items = []
-    text_y = y1 - 10
-    font_size = 20
-    for line in lines:
-        text_y -= font_size + 4
-        text_items.append((line, x1, text_y, color, font_size))
-
-    draw_texts(frame, text_items)
+    _put_lines(frame, lines, x1, y1 - 10, color)
 
 
 def draw_camera_marker(frame, pixel_x: float, pixel_y: float):
@@ -57,4 +60,4 @@ def draw_camera_marker(frame, pixel_x: float, pixel_y: float):
     color = (255, 100, 0)
     cv2.drawMarker(frame, (x, y), color, cv2.MARKER_TILTED_CROSS, 24, 2)
     cv2.circle(frame, (x, y), 10, color, 2)
-    draw_texts(frame, [("O", x + 14, y - 20, color, 18)])
+    cv2.putText(frame, "O", (x + 14, y - 20), _FONT, 0.5, color, 2, cv2.LINE_AA)
