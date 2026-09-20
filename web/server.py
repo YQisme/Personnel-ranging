@@ -268,16 +268,61 @@ async def ws_detect(websocket: WebSocket):
         return
 
 
+def _lan_ips() -> list[str]:
+    """枚举本机局域网 IPv4，便于其他设备访问。"""
+    import socket
+
+    ips: list[str] = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            primary = sock.getsockname()[0]
+            if primary and not primary.startswith("127."):
+                ips.append(primary)
+    except OSError:
+        pass
+
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except OSError:
+        pass
+
+    return ips
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Web 标定与实时检测")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="监听地址，默认 0.0.0.0 允许局域网访问；仅本机可用 127.0.0.1",
+    )
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
-    print(f"标定页面:   http://{args.host}:{args.port}/")
-    print(f"实时监控:   http://{args.host}:{args.port}/monitor")
-    print(f"3D 轨迹:    http://{args.host}:{args.port}/trajectory")
-    print(f"WebSocket:  ws://{args.host}:{args.port}/ws/detect")
+
+    print(f"本机访问:")
+    print(f"  标定页面:   http://127.0.0.1:{args.port}/")
+    print(f"  实时监控:   http://127.0.0.1:{args.port}/monitor")
+    print(f"  3D 轨迹:    http://127.0.0.1:{args.port}/trajectory")
+
+    if args.host in ("0.0.0.0", "::"):
+        lan = _lan_ips()
+        if lan:
+            print(f"局域网访问 (同网段设备浏览器打开):")
+            for ip in lan:
+                print(f"  http://{ip}:{args.port}/")
+                print(f"  http://{ip}:{args.port}/monitor")
+                print(f"  http://{ip}:{args.port}/trajectory")
+        else:
+            print("局域网: 已监听 0.0.0.0，请用本机 IP 访问（如 http://192.168.x.x:8080）")
+        print("提示: 若其他设备打不开，请检查 Windows 防火墙是否放行该端口")
+    else:
+        print(f"监听: {args.host}:{args.port}")
+
     uvicorn.run(
         app,
         host=args.host,

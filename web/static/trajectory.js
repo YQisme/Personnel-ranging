@@ -19,9 +19,11 @@ const DIR_COLORS = {
 };
 
 const MAX_TRAIL_POINTS = 200;
-const MODEL_URL = "/static/models/Soldier.glb";
+const MODEL_URL = "/static/models/Human.glb";
 const MODEL_SCALE = 1.0;
 const MODEL_Y_OFFSET = 0;
+/** Mixamo Xbot 默认面朝 +Z */
+const MODEL_FACING_Y = 0;
 const WS_RECONNECT_MS = 1500;
 
 /** 小于此位移（米）视为检测噪声，忽略 */
@@ -112,8 +114,7 @@ class PersonAgent {
     });
     this.model.scale.setScalar(MODEL_SCALE);
     this.model.position.y = MODEL_Y_OFFSET;
-    // Soldier.glb 默认面朝 -Z；转到 +Z，使 group.rotation.y = atan2(dx,dz) 为正前方
-    this.model.rotation.y = Math.PI;
+    this.model.rotation.y = MODEL_FACING_Y;
     this.group.add(this.model);
 
     this.mixer = new THREE.AnimationMixer(this.model);
@@ -122,6 +123,7 @@ class PersonAgent {
       const action = this.mixer.clipAction(clip);
       action.enabled = true;
       this.actions[clip.name] = action;
+      this.actions[clip.name.toLowerCase()] = action;
     }
     this.currentAction = null;
     this._play("Idle");
@@ -170,8 +172,22 @@ class PersonAgent {
     scene.add(this.trailLine);
   }
 
+  _resolveAction(name) {
+    const aliases = {
+      Idle: ["Idle", "idle", "HappyIdle", "Sway"],
+      Walk: ["Walk", "walk"],
+      Run: ["Run", "run", "Walk", "walk"],
+    };
+    for (const key of aliases[name] || [name]) {
+      if (this.actions[key]) return this.actions[key];
+    }
+    const lower = String(name).toLowerCase();
+    if (this.actions[lower]) return this.actions[lower];
+    return this.actions.Idle || this.actions.idle || Object.values(this.actions)[0];
+  }
+
   _play(name) {
-    const next = this.actions[name] || this.actions.Idle;
+    const next = this._resolveAction(name);
     if (!next) return;
     if (this.currentAction === next) return;
     if (this.currentAction) {
@@ -184,6 +200,7 @@ class PersonAgent {
     next.setEffectiveWeight(1);
     next.fadeIn(0.2).play();
     this.currentAction = next;
+    this._currentAnimName = name;
   }
 
   updateFromApi(p) {
@@ -348,8 +365,10 @@ class PersonAgent {
       if (this.displaySpeed >= RUN_SPEED) {
         this._play("Run");
         if (this.currentAction) {
+          // 无独立 Run 时回退 Walk，略加快步频
+          const base = this._currentAnimName === "Run" && this.actions.Run ? 3.5 : WALK_PACE;
           this.currentAction.setEffectiveTimeScale(
-            THREE.MathUtils.clamp(this.displaySpeed / 3.5, 0.9, 1.5),
+            THREE.MathUtils.clamp(this.displaySpeed / base, 1.05, 1.7),
           );
         }
       } else {
@@ -557,6 +576,12 @@ function initScene() {
   controls.maxPolarAngle = Math.PI * 0.49;
   controls.minDistance = 2;
   controls.maxDistance = 80;
+  // 左键旋转；中键平移；右键仍可平移；滚轮缩放
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.PAN,
+    RIGHT: THREE.MOUSE.PAN,
+  };
   controls.update();
 
   const hemi = new THREE.HemisphereLight(0xb1c4e0, 0x1a2332, 0.85);

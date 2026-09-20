@@ -137,7 +137,10 @@ python calibrate.py --source videos/test.mp4
 python web/server.py
 ```
 
-浏览器打开 **http://127.0.0.1:8080**
+默认监听 `0.0.0.0:8080`，本机与局域网设备均可访问：
+
+- 本机：**http://127.0.0.1:8080**
+- 局域网：启动时终端会打印本机 IP，其他设备打开 **http://\<本机IP\>:8080**（需同一网段；若打不开请放行 Windows 防火墙端口）
 
 1. 点击「从视频源抓拍」或「上传图片」加载画面
 2. 在地面用卷尺从 **O**（摄像头正下方地面点）量出距离
@@ -145,10 +148,10 @@ python web/server.py
 4. 可选填写横向偏移（左负右正，提高透视精度）
 5. 至少 4 个点后点击「保存标定」
 
-自定义端口：
+仅本机访问 / 自定义端口：
 
 ```bash
-python web/server.py --host 0.0.0.0 --port 8080
+python web/server.py --host 127.0.0.1 --port 8080
 ```
 
 #### 方式二：OpenCV 窗口标定
@@ -205,7 +208,7 @@ python main.py --source videos/test.mp4
 python web/server.py
 ```
 
-打开 **http://127.0.0.1:8080/monitor**
+打开 **http://127.0.0.1:8080/monitor**（局域网用启动时打印的本机 IP）
 
 1. 确认已完成标定
 2. 点击「开始检测」
@@ -213,13 +216,13 @@ python web/server.py
 
 #### 方式 C：Three.js 3D 人员轨迹
 
-打开 **http://127.0.0.1:8080/trajectory**
+打开 **http://127.0.0.1:8080/trajectory**（局域网同样用本机 IP）
 
 1. 确认已完成标定
 2. 点击「开始检测」（与监控页共用同一检测服务）
 3. 通过 **WebSocket** `ws://…/ws/detect` 按帧推送人员坐标，驱动 3D 模型
 4. 根据速度切换 Idle / Walk / Run，并绘制彩色轨迹线
-5. 拖拽旋转视角、滚轮缩放；可跟随最近人员或清空轨迹
+5. 左键拖拽旋转、中键/右键平移、滚轮缩放；可跟随最近人员或清空轨迹
 
 Web 服务提供标定页（`/`）、监控页（`/monitor`）与 3D 轨迹页（`/trajectory`），共用 `config/config.yaml` 中的视频源与标定文件。
 
