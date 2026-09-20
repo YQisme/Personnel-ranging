@@ -84,6 +84,10 @@ class LiveDetectionService:
             if not ok or frame is None:
                 with self._lock:
                     self._error = err or "视频读取失败"
+                # 本地视频播完且不循环：停止检测
+                if self.video.ended:
+                    self.running = False
+                    break
                 time.sleep(0.3)
                 continue
 

@@ -12,21 +12,15 @@ import yaml
 from src.detector import PersonDetectorTracker
 from src.homography import HomographyTransformer
 from src.motion_analyzer import MotionAnalyzer
+from src.video_source import VideoSource, get_video_source
 from src.visualizer import draw_camera_marker, draw_person_info
 
 
 def load_config(config_path: str) -> dict:
     with open(config_path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def open_video_source(config: dict) -> cv2.VideoCapture:
-    camera = config["camera"]
-    source = camera.get("video_file") or camera["rtsp_url"]
-    cap = cv2.VideoCapture(source)
-    if not cap.isOpened():
-        raise RuntimeError(f"无法打开视频源: {source}")
-    return cap
+        config = yaml.safe_load(f)
+    config["_config_path"] = str(Path(config_path).resolve())
+    return config
 
 
 def load_camera_origin_pixel(
@@ -39,6 +33,11 @@ def load_camera_origin_pixel(
 def main():
     parser = argparse.ArgumentParser(description="YOLO人员距离速度检测系统")
     parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument(
+        "--source",
+        default=None,
+        help="视频源：本地文件路径 / RTSP 地址 / 摄像头索引。覆盖 config 中的 video_file/rtsp_url",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -74,15 +73,25 @@ def main():
         kalman_measurement_noise=motion_cfg["kalman_measurement_noise"],
     )
 
-    cap = open_video_source(config)
-    fps = camera_cfg.get("fps", 25)
+    video = VideoSource(config, override=args.source)
+    if not video.open():
+        print(f"无法打开视频源: {video.source}")
+        sys.exit(1)
+
+    source_display = get_video_source(config, args.source)
+    print(f"视频源: {source_display}")
+
+    cfg_fps = float(camera_cfg.get("fps", 25) or 25)
+    fps = video.get_fps(cfg_fps)
+    # 本地视频按帧率延时；RTSP/摄像头尽量低延迟
+    wait_ms = max(1, int(1000 / fps)) if video.is_file else 1
 
     writer = None
     if output_cfg.get("save_video"):
         out_path = output_cfg["video_output"]
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w = int(video.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(video.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         writer = cv2.VideoWriter(
             out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)
         )
@@ -96,9 +105,12 @@ def main():
 
     frame_count = 0
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("视频结束或读取失败")
+        ok, frame, err = video.read()
+        if not ok or frame is None:
+            if video.ended:
+                print("本地视频播放结束")
+            else:
+                print(err or "视频结束或读取失败")
             break
 
         frame_count += 1
@@ -135,7 +147,7 @@ def main():
 
         if output_cfg.get("show_window"):
             cv2.imshow(window_name, frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            if cv2.waitKey(wait_ms) & 0xFF == ord("q"):
                 break
 
         if writer:
@@ -148,7 +160,7 @@ def main():
             json.dump(events, f, ensure_ascii=False, indent=2)
         print(f"事件数据已保存: {json_path}")
 
-    cap.release()
+    video.release()
     if writer:
         writer.release()
     cv2.destroyAllWindows()

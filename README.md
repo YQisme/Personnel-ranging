@@ -15,7 +15,7 @@
 - **距离计算**：人员到摄像头地面投影点 O 的地面距离（米）
 - **速度计算**：滑动窗口内距离变化率，卡尔曼滤波平滑
 - **方向判断**：距离持续减少 → 靠近摄像头；持续增加 → 远离摄像头
-- **RTSP 优化**：TCP 传输、小缓冲、读帧失败自动重连
+- **RTSP / 本地视频**：TCP 传输、小缓冲、流断线自动重连；本地文件支持循环播放
 - **画面标注**：OpenCV 英文叠加（低延迟，无 PIL 整帧转换）
 
 ## 系统架构
@@ -97,17 +97,35 @@ pip install -r requirements.txt
 
 ### 1. 配置视频源
 
-编辑 `config/config.yaml`：
+编辑 `config/config.yaml`，**二选一**：
+
+**方式 A：本地视频（离线调试推荐）**
+
+```yaml
+camera:
+  rtsp_url: ""
+  video_file: "videos/test.mp4"   # 相对项目根目录，或写绝对路径
+  loop: true                      # 播放结束后是否循环
+```
+
+**方式 B：RTSP 摄像头**
 
 ```yaml
 camera:
   rtsp_url: "rtsp://admin:密码@192.168.1.64:554/Streaming/Channels/101"
-  # 本地视频优先于 RTSP（非空时使用 video_file）
-  video_file: ""
-  rtsp_transport: tcp   # RTSP 建议 tcp，更稳定
+  video_file: ""                  # 留空才走 RTSP
+  rtsp_transport: tcp
 ```
 
-> `video_file` 非空时优先使用本地文件，便于离线调试。
+> 优先级：`video_file`（非空）→ `rtsp_url` → 摄像头 `0`。也可用命令行 `--source` 临时覆盖。
+
+命令行直接指定本地视频，无需改配置：
+
+```bash
+python main.py --source videos/test.mp4
+python main.py --source E:/data/sample.mp4
+python calibrate.py --source videos/test.mp4
+```
 
 ### 2. 摄像机标定（必做）
 
@@ -173,8 +191,10 @@ python generate_sample_calibration.py
 
 ```bash
 python main.py
-# 或指定配置
+# 指定配置
 python main.py --config config/config.yaml
+# 直接用本地视频（覆盖配置中的视频源）
+python main.py --source videos/test.mp4
 ```
 
 按 `q` 退出。可选保存视频与 JSON 事件（见配置 `output.*`）。
@@ -225,11 +245,12 @@ Approaching
 
 | 参数 | 说明 | 默认 |
 |------|------|------|
-| `rtsp_url` |  RTSP 地址 | — |
-| `video_file` | 本地视频路径（非空时优先） | `""` |
+| `rtsp_url` | RTSP 地址 | — |
+| `video_file` | 本地视频路径（非空时优先于 `rtsp_url`） | `""` |
+| `loop` | 本地视频结束后是否循环播放 | `true` |
 | `width` / `height` / `fps` | 参考分辨率与帧率 | 1920×1080 @ 25 |
 | `rtsp_transport` | RTSP 传输协议 | `tcp` |
-| `max_read_fails` | 连续读帧失败多少次后重连 | `5` |
+| `max_read_fails` | 连续读帧失败多少次后重连（仅流媒体） | `5` |
 | `reconnect_delay` | 重连等待秒数 | `2` |
 
 ### detection — YOLO 检测
@@ -363,7 +384,7 @@ yolo判断距离速度/
 │   ├── visualizer.py            # OpenCV 英文画面标注
 │   ├── pipeline.py              # 检测流水线（Web 与扩展共用）
 │   ├── live_detection.py        # Web 后台检测线程 + MJPEG
-│   ├── video_source.py          # RTSP 读帧与自动重连
+│   ├── video_source.py          # RTSP / 本地视频 / 摄像头读写
 │   └── calibration_service.py   # Web 标定 API 逻辑
 ├── calibrate.py                 # OpenCV 窗口标定工具
 ├── main.py                      # 命令行主入口
@@ -393,9 +414,16 @@ yolo判断距离速度/
 | GET | `/api/detect/status` | FPS、人员列表、错误信息 |
 | GET | `/api/detect/stream` | MJPEG 实时流 |
 
-## RTSP 地址格式
+## 视频源格式
 
-常见格式：
+**本地视频**（`mp4` / `avi` / `mkv` / `mov` 等）：
+
+```
+videos/test.mp4
+E:/data/sample.mp4
+```
+
+**RTSP**（常见海康格式）：
 
 ```
 rtsp://admin:密码@IP:554/Streaming/Channels/101   # 主码流
@@ -424,6 +452,12 @@ rtsp://admin:密码@IP:554/Streaming/Channels/102   # 子码流
 - 用 VLC 先验证 RTSP 是否可播
 - 检查 `rtsp_transport`（建议 `tcp`）
 - 可改用 `video_file` 本地视频测试
+
+**本地视频打不开**
+
+- 确认 `video_file` 路径正确（相对路径相对项目根目录）
+- 或用 `python main.py --source 你的视频.mp4` 直接指定
+- 确认文件未被占用，可用系统播放器先打开验证
 
 **Web 监控黑屏或 FPS 很低**
 

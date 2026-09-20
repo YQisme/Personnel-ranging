@@ -86,6 +86,7 @@ async def api_capture(source: str | None = None):
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             config = yaml.safe_load(f)
+        config["_config_path"] = str(CONFIG_PATH.resolve())
         video_source = resolve_video_source(str(CONFIG_PATH), source)
         _current_frame = capture_frame(video_source, config)
         h, w = _current_frame.shape[:2]

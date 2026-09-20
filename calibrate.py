@@ -20,15 +20,21 @@ import numpy as np
 import yaml
 
 from src.homography import HomographyTransformer, check_ground_points_spread
+from src.video_source import open_video_capture, resolve_path
 
 
 class CalibrationTool:
     POINT_LABELS = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
-    def __init__(self, image_source: str):
-        self.cap = cv2.VideoCapture(image_source)
+    def __init__(self, image_source: str, config: dict | None = None):
+        cfg = dict(config or {})
+        cam = dict(cfg.get("camera", {}))
+        cfg["camera"] = cam
+        source = resolve_path(image_source, cfg.get("_config_path"))
+        # 用 override 打开任意源（本地文件 / RTSP / 摄像头）
+        self.cap = open_video_capture(cfg, override=source)
         if not self.cap.isOpened():
-            raise RuntimeError(f"无法打开视频源: {image_source}")
+            raise RuntimeError(f"无法打开视频源: {source}")
 
         ret, self.frame = self.cap.read()
         if not ret:
@@ -164,14 +170,17 @@ def main():
     args = parser.parse_args()
 
     config_path = Path(args.config)
+    config: dict = {}
     if config_path.exists():
         with open(config_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-        source = args.source or config["camera"].get("video_file") or config["camera"]["rtsp_url"]
+            config = yaml.safe_load(f) or {}
+        config["_config_path"] = str(config_path.resolve())
+        camera = config.get("camera", {})
+        source = args.source or camera.get("video_file") or camera.get("rtsp_url") or "0"
     else:
         source = args.source or "0"
 
-    tool = CalibrationTool(source)
+    tool = CalibrationTool(source, config)
     tool.run(args.output)
 
 

@@ -1,15 +1,18 @@
-# 海康摄像头 RTSP 配置
+# 海康摄像头 RTSP / 本地视频配置
 camera:
   # 示例: rtsp://admin:password@192.168.1.64:554/Streaming/Channels/101
   rtsp_url: "rtsp://192.168.0.13:8554/camera1"
-  # 也可使用本地视频文件进行测试
+  # 本地视频路径（非空时优先于 rtsp_url），支持相对/绝对路径
+  # 示例: "videos/test.mp4" 或 "E:/data/sample.mp4"
   video_file: ""
   width: 1920
   height: 1080
   fps: 25
+  # 本地视频播放结束后是否循环（Web 监控建议 true；CLI 可用 --source 覆盖）
+  loop: true
   # RTSP 传输协议 tcp 更稳定
   rtsp_transport: tcp
-  # 连续读帧失败多少次后重连
+  # 连续读帧失败多少次后重连（仅对流媒体生效）
   max_read_fails: 5
   reconnect_delay: 2
 

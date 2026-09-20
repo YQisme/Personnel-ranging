@@ -24,17 +24,22 @@ def ground_from_distance(distance: float, lateral: float = 0.0) -> tuple[float, 
 
 
 def capture_frame(source: str, config: dict | None = None) -> np.ndarray:
+    from src.video_source import is_rtsp, open_video_capture, resolve_path
+
     if config is not None:
         cam = dict(config.get("camera", {}))
-        if source.startswith("rtsp://"):
+        cfg = dict(config)
+        cfg["camera"] = cam
+        if is_rtsp(source):
             cam["rtsp_url"] = source
             cam["video_file"] = ""
         else:
-            cam["video_file"] = source
+            cam["video_file"] = resolve_path(source, cfg.get("_config_path"))
             cam["rtsp_url"] = ""
-        cap = open_video_capture({"camera": cam})
+        cap = open_video_capture(cfg)
     else:
-        cap = cv2.VideoCapture(source)
+        resolved = resolve_path(source)
+        cap = cv2.VideoCapture(resolved)
     if not cap.isOpened():
         raise RuntimeError(f"无法打开视频源: {source}")
     ret, frame = cap.read()
@@ -45,15 +50,15 @@ def capture_frame(source: str, config: dict | None = None) -> np.ndarray:
 
 
 def resolve_video_source(config_path: str = "config/config.yaml", override: str | None = None) -> str:
-    if override:
-        return override
+    from src.video_source import get_video_source
+
     path = Path(config_path)
     if not path.exists():
-        return "0"
+        return override or "0"
     with open(path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    camera = config.get("camera", {})
-    return camera.get("video_file") or camera.get("rtsp_url") or "0"
+    config["_config_path"] = str(path.resolve())
+    return get_video_source(config, override)
 
 
 def resolve_homography_path(config_path: str = "config/config.yaml") -> str:
