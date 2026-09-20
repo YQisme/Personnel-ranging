@@ -70,12 +70,9 @@ function renderPersons(persons) {
     const li = document.createElement("li");
     li.className = "point-item";
     const dir = DIRECTION_LABELS[p.direction] || p.direction;
-    let color = "#8b9cb3";
-    if (p.direction === "approaching") color = "#ef4444";
-    if (p.direction === "retreating") color = "#22c55e";
 
     li.innerHTML = `
-      <span class="label" style="color:${color}">#${p.person_id}</span>
+      <span class="label">#${p.person_id}</span>
       <span class="meta">
         相对原点 <strong>x=${p.ground_x}m</strong>, <strong>y=${p.ground_y}m</strong><br>
         速度 ${p.speed} m/s (${p.speed_kmh} km/h)<br>

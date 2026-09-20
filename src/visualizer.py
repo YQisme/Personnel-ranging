@@ -14,12 +14,8 @@ DIRECTION_LABELS = {
     MotionDirection.UNKNOWN: "Unknown",
 }
 
-DIRECTION_COLORS = {
-    MotionDirection.STATIONARY: (200, 200, 200),
-    MotionDirection.APPROACHING: (0, 0, 255),
-    MotionDirection.RETREATING: (0, 255, 0),
-    MotionDirection.UNKNOWN: (255, 255, 0),
-}
+# 统一绘制色（BGR），不再按靠近/远离变色
+_DRAW_COLOR = (246, 130, 59)  # #3b82f6
 
 
 def _put_lines(frame, lines: list[str], x: int, y: int, color, font_scale: float = 0.55):
@@ -33,7 +29,7 @@ def _put_lines(frame, lines: list[str], x: int, y: int, color, font_scale: float
 
 def draw_person_info(frame, state: PersonMotionState):
     x1, y1, x2, y2 = [int(v) for v in state.bbox]
-    color = DIRECTION_COLORS.get(state.direction, (255, 255, 255))
+    color = _DRAW_COLOR
 
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 

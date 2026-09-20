@@ -11,12 +11,8 @@ const DIRECTION_LABELS = {
   unknown: "未知",
 };
 
-const DIR_COLORS = {
-  approaching: 0xef4444,
-  retreating: 0x22c55e,
-  stationary: 0x8b9cb3,
-  unknown: 0xf59e0b,
-};
+/** 轨迹线统一颜色，不按方向变色 */
+const TRAIL_COLOR = 0x3b82f6;
 
 const MAX_TRAIL_POINTS = 200;
 const MODEL_URL = "/static/models/Human.glb";
@@ -181,7 +177,7 @@ class PersonAgent {
 
     this.trailGeom = new THREE.BufferGeometry();
     this.trailMat = new THREE.LineBasicMaterial({
-      color: DIR_COLORS.unknown,
+      color: TRAIL_COLOR,
       transparent: true,
       opacity: 0,
     });
@@ -189,7 +185,7 @@ class PersonAgent {
     this.trailLine.frustumCulled = false;
 
     const labelEl = document.createElement("div");
-    labelEl.className = "person-label unknown";
+    labelEl.className = "person-label";
     labelEl.textContent = `#${personId}`;
     labelEl.style.opacity = "0";
     this.label = new CSS2DObject(labelEl);
@@ -369,16 +365,13 @@ class PersonAgent {
       }
     }
 
-    const color = DIR_COLORS[this.direction] ?? DIR_COLORS.unknown;
-    this.trailMat.color.setHex(color);
-
     const el = this.label.element;
-    el.className = `person-label ${this.direction}`;
+    el.className = "person-label";
     const speedStr = `${this.speed.toFixed(1)} m/s`;
     if (showCoords?.checked) {
-      el.textContent = `#${this.personId}  ${speedStr}  x:${this.camX.toFixed(1)}  y:${this.camY.toFixed(1)}`;
+      el.innerHTML = `#${this.personId}<br>${speedStr}<br>x:${this.camX.toFixed(1)}  y:${this.camY.toFixed(1)}`;
     } else {
-      el.textContent = `#${this.personId}  ${speedStr}`;
+      el.innerHTML = `#${this.personId}<br>${speedStr}`;
     }
   }
 
@@ -849,11 +842,8 @@ function renderPersonList(persons) {
     const li = document.createElement("li");
     li.className = "point-item";
     const dir = DIRECTION_LABELS[p.direction] || p.direction;
-    let color = "#8b9cb3";
-    if (p.direction === "approaching") color = "#ef4444";
-    if (p.direction === "retreating") color = "#22c55e";
     li.innerHTML = `
-      <span class="label" style="color:${color}">#${p.person_id}</span>
+      <span class="label">#${p.person_id}</span>
       <span class="meta">
         相对原点 <strong>x=${p.ground_x}</strong>, <strong>y=${p.ground_y}</strong> m<br>
         速度 ${p.speed} m/s · ${dir}
