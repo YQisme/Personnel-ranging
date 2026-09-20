@@ -1,10 +1,10 @@
 # 海康摄像头 RTSP / 本地视频配置
 camera:
   # 示例: rtsp://admin:password@192.168.1.64:554/Streaming/Channels/101
-  rtsp_url: "rtsp://192.168.0.13:8554/camera1"
+  rtsp_url: ""
   # 本地视频路径（非空时优先于 rtsp_url），支持相对/绝对路径
   # 示例: "videos/test.mp4" 或 "E:/data/sample.mp4"
-  video_file: ""
+  video_file: "test.mp4"
   width: 1920
   height: 1080
   fps: 25

@@ -5,7 +5,7 @@
 支持两种使用方式：
 
 - **命令行**：`main.py` 本地 OpenCV 窗口实时预览
-- **Web 界面**：标定 + 浏览器实时监控（MJPEG 流 + 人员列表）
+- **Web 界面**：标定 + 浏览器实时监控（MJPEG 流 + 人员列表）+ Three.js 3D 人员轨迹
 
 ## 功能
 
@@ -45,8 +45,8 @@ Homography 透视变换
            │
            ├─────────────┬──────────────┐
            ▼             ▼              ▼
-    OpenCV 画面标注   JSON 事件    Web MJPEG 流
-    (main.py)      (output/)     (/monitor)
+    OpenCV 画面标注   JSON 事件    Web MJPEG 流    Three.js 3D 轨迹
+    (main.py)      (output/)     (/monitor)      (/trajectory)
 ```
 
 ## 距离定义
@@ -211,7 +211,17 @@ python web/server.py
 2. 点击「开始检测」
 3. 左侧为 MJPEG 实时画面，右侧为当前检测到的人员列表（距离 / 速度 / 方向）
 
-Web 服务同时提供标定页（`/`）与监控页（`/monitor`），共用 `config/config.yaml` 中的视频源与标定文件。
+#### 方式 C：Three.js 3D 人员轨迹
+
+打开 **http://127.0.0.1:8080/trajectory**
+
+1. 确认已完成标定
+2. 点击「开始检测」（与监控页共用同一检测服务）
+3. 通过 **WebSocket** `ws://…/ws/detect` 按帧推送人员坐标，驱动 3D 模型
+4. 根据速度切换 Idle / Walk / Run，并绘制彩色轨迹线
+5. 拖拽旋转视角、滚轮缩放；可跟随最近人员或清空轨迹
+
+Web 服务提供标定页（`/`）、监控页（`/monitor`）与 3D 轨迹页（`/trajectory`），共用 `config/config.yaml` 中的视频源与标定文件。
 
 ## 画面标注说明
 
@@ -390,8 +400,9 @@ yolo判断距离速度/
 ├── main.py                      # 命令行主入口
 ├── generate_sample_calibration.py
 ├── web/
-│   ├── server.py                # FastAPI：标定 + 实时监控
-│   └── static/                  # 前端（标定页 / 监控页）
+│   ├── server.py                # FastAPI：标定 + 实时监控 + 3D 轨迹
+│   └── static/                  # 前端（标定 / 监控 / Three.js 轨迹）
+│       └── models/Soldier.glb   # 真人骨骼模型（Idle/Walk/Run）
 ├── requirements.txt
 └── README.md
 ```
@@ -402,6 +413,7 @@ yolo判断距离速度/
 |------|------|------|
 | GET | `/` | 标定页面 |
 | GET | `/monitor` | 实时监控页面 |
+| GET | `/trajectory` | Three.js 3D 人员轨迹页面 |
 | GET | `/api/status` | 标定状态、视频源、检测是否运行 |
 | POST | `/api/capture` | 从配置的视频源抓拍一帧 |
 | POST | `/api/upload` | 上传标定用图片 |
@@ -411,8 +423,9 @@ yolo判断距离速度/
 | POST | `/api/save` | 保存标定 |
 | POST | `/api/detect/start` | 启动后台检测 |
 | POST | `/api/detect/stop` | 停止检测 |
-| GET | `/api/detect/status` | FPS、人员列表、错误信息 |
+| GET | `/api/detect/status` | FPS、人员列表、错误信息（HTTP 快照） |
 | GET | `/api/detect/stream` | MJPEG 实时流 |
+| WS | `/ws/detect` | 检测结果按帧推送（`type=status` / `ping`） |
 
 ## 视频源格式
 
@@ -476,4 +489,4 @@ rtsp://admin:密码@IP:554/Streaming/Channels/102   # 子码流
 - 多摄像头统一到厂区坐标系
 - 跨摄像头连续跟踪
 - 告警规则（如距摄像头 < 3m 且靠近时触发）
-- 对接平台 API / WebSocket 推送
+- 对接平台 API / 事件订阅

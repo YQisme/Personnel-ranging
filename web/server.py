@@ -7,11 +7,14 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import asyncio
+from contextlib import asynccontextmanager
+
 import cv2
 import numpy as np
 import uvicorn
 import yaml
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -30,12 +33,28 @@ from src.live_detection import LiveDetectionService
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
-app = FastAPI(title="YOLO 人员距离速度检测")
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
 _current_frame: np.ndarray | None = None
 _detection_service: LiveDetectionService | None = None
 
+
+def _shutdown_detection():
+    global _detection_service
+    if _detection_service is not None:
+        try:
+            _detection_service.stop()
+        except Exception:
+            pass
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    # CTRL+C / 进程退出时先停检测，打断 MJPEG / WebSocket 长连接
+    await asyncio.to_thread(_shutdown_detection)
+
+
+app = FastAPI(title="YOLO 人员距离速度检测", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 class CalibrateRequest(BaseModel):
     points: list[dict] = Field(..., min_length=4)
@@ -56,6 +75,11 @@ async def index():
 @app.get("/monitor", response_class=HTMLResponse)
 async def monitor():
     return HTMLResponse((STATIC_DIR / "monitor.html").read_text(encoding="utf-8"))
+
+
+@app.get("/trajectory", response_class=HTMLResponse)
+async def trajectory():
+    return HTMLResponse((STATIC_DIR / "trajectory.html").read_text(encoding="utf-8"))
 
 
 @app.get("/api/status")
@@ -217,6 +241,30 @@ async def detect_stream():
     )
 
 
+@app.websocket("/ws/detect")
+async def ws_detect(websocket: WebSocket):
+    """检测结果实时推送：有新帧发 type=status，否则短轮询（便于关停取消）。"""
+    await websocket.accept()
+    svc = _get_detection_service()
+    last_seq = -1
+    try:
+        snap = svc.get_status()
+        last_seq = snap["seq"]
+        await websocket.send_json({"type": "status", **snap})
+
+        while True:
+            # 非阻塞短等，避免 to_thread + Condition 在 CTRL+C 时拖死关停
+            await asyncio.sleep(0.05)
+            status = svc.get_status()
+            seq = status["seq"]
+            if seq == last_seq:
+                continue
+            last_seq = seq
+            await websocket.send_json({"type": "status", **status})
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        return
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Web 标定与实时检测")
@@ -225,7 +273,14 @@ def main():
     args = parser.parse_args()
     print(f"标定页面:   http://{args.host}:{args.port}/")
     print(f"实时监控:   http://{args.host}:{args.port}/monitor")
-    uvicorn.run(app, host=args.host, port=args.port)
+    print(f"3D 轨迹:    http://{args.host}:{args.port}/trajectory")
+    print(f"WebSocket:  ws://{args.host}:{args.port}/ws/detect")
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        timeout_graceful_shutdown=3,
+    )
 
 
 if __name__ == "__main__":
