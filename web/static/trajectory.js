@@ -55,6 +55,17 @@ const HEADING_FLIP_MS = 450;
 const HEADING_TURN = 4.0;
 /** 用追赶偏移补朝向的最小距离 */
 const HEADING_FALLBACK_DIST = 0.45;
+/** 跟踪丢失后宽限期（毫秒），超时后开始自然离场 */
+const LOST_GRACE_MS = 3000;
+/** 出场淡入时长（秒） */
+const SPAWN_FADE_SEC = 0.7;
+/** 离场淡出时长（秒） */
+const EXIT_FADE_SEC = 0.9;
+/** 出场时相对检测点的外侧偏移（米），避免凭空出现 */
+const SPAWN_OFFSET_M = 2.4;
+/** 材质不透明度上限（与轨迹线峰值一致） */
+const MODEL_OPACITY = 1;
+const TRAIL_OPACITY = 0.85;
 
 /**
  * 人员落点用标定原点地面直角坐标，不用极径距离 D。
@@ -102,17 +113,27 @@ class PersonAgent {
     this.group = new THREE.Group();
     this.group.name = `person_${personId}`;
 
+    this._materials = [];
     this.model = cloneSkinned(template);
     this.model.traverse((obj) => {
       if (obj.isMesh) {
         obj.castShadow = true;
         obj.receiveShadow = true;
         if (obj.material) {
-          obj.material = obj.material.clone();
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+          const cloned = mats.map((m) => {
+            const c = m.clone();
+            c.transparent = true;
+            c.opacity = 0;
+            c.depthWrite = c.opacity >= 0.99;
+            this._materials.push(c);
+            return c;
+          });
+          obj.material = Array.isArray(obj.material) ? cloned : cloned[0];
         }
       }
     });
-    this.model.scale.setScalar(MODEL_SCALE);
+    this.model.scale.setScalar(MODEL_SCALE * 0.92);
     this.model.position.y = MODEL_Y_OFFSET;
     this.model.rotation.y = MODEL_FACING_Y;
     this.group.add(this.model);
@@ -152,11 +173,16 @@ class PersonAgent {
     this._pendingHeading = null;
     this._pendingSince = 0;
 
+    /** spawning | active | exiting | disposed */
+    this.life = "spawning";
+    this._fade = 0;
+    this._disposed = false;
+
     this.trailGeom = new THREE.BufferGeometry();
     this.trailMat = new THREE.LineBasicMaterial({
       color: DIR_COLORS.unknown,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0,
     });
     this.trailLine = new THREE.Line(this.trailGeom, this.trailMat);
     this.trailLine.frustumCulled = false;
@@ -164,12 +190,89 @@ class PersonAgent {
     const labelEl = document.createElement("div");
     labelEl.className = "person-label unknown";
     labelEl.textContent = `#${personId}`;
+    labelEl.style.opacity = "0";
     this.label = new CSS2DObject(labelEl);
     this.label.position.set(0, 1.9, 0);
     this.group.add(this.label);
 
     scene.add(this.group);
     scene.add(this.trailLine);
+  }
+
+  _setVisualFade(t) {
+    const a = THREE.MathUtils.clamp(t, 0, 1);
+    this._fade = a;
+    for (const mat of this._materials) {
+      mat.opacity = a * MODEL_OPACITY;
+      mat.depthWrite = a >= 0.95;
+      mat.transparent = a < 0.99;
+    }
+    this.trailMat.opacity = a * TRAIL_OPACITY;
+    if (this.label?.element) {
+      this.label.element.style.opacity = String(a);
+    }
+    const s = THREE.MathUtils.lerp(0.92, 1, a);
+    this.model.scale.setScalar(MODEL_SCALE * s);
+  }
+
+  /**
+   * 从检测点外侧走进：先放在落点更外侧，再追赶真实目标，并淡入。
+   */
+  beginSpawn(detectPos) {
+    const ox = detectPos.x;
+    const oz = detectPos.z;
+    const len = Math.hypot(ox, oz);
+    let nx;
+    let nz;
+    if (len > 0.4) {
+      nx = ox / len;
+      nz = oz / len;
+    } else {
+      // 靠近原点时默认从相机一侧（-Z）走进
+      nx = 0;
+      nz = -1;
+    }
+    this.smooth.set(ox + nx * SPAWN_OFFSET_M, 0, oz + nz * SPAWN_OFFSET_M);
+    this.target.copy(detectPos);
+    this._rawTarget.copy(detectPos);
+    this._prevRaw.copy(detectPos);
+    this._prevSmooth.copy(this.smooth);
+    this.group.position.copy(this.smooth);
+
+    this._travelX = -nx;
+    this._travelZ = -nz;
+    this._travelValid = true;
+    this.heading = Math.atan2(this._travelX, this._travelZ);
+    this.group.rotation.y = this.heading;
+    this._locoUntil = performance.now() + 1200;
+    this._initialized = true;
+    this.life = "spawning";
+    this._setVisualFade(0);
+  }
+
+  beginExit() {
+    if (this.life === "exiting" || this.life === "disposed") return;
+    this.life = "exiting";
+    // 无行进方向时沿远离原点方向离开
+    if (!this._travelValid) {
+      const len = Math.hypot(this.smooth.x, this.smooth.z);
+      if (len > 0.2) {
+        this._travelX = this.smooth.x / len;
+        this._travelZ = this.smooth.z / len;
+      } else {
+        this._travelX = 0;
+        this._travelZ = 1;
+      }
+      this._travelValid = true;
+    }
+    this.heading = Math.atan2(this._travelX, this._travelZ);
+    this._play("Walk");
+  }
+
+  /** 跟踪恢复：取消离场，淡回可见 */
+  cancelExit() {
+    if (this.life !== "exiting") return;
+    this.life = this._fade >= 0.98 ? "active" : "spawning";
   }
 
   _resolveAction(name) {
@@ -212,14 +315,13 @@ class PersonAgent {
     this.distance = p.distance || 0;
     this.lastSeen = performance.now();
 
+    if (this.life === "exiting") {
+      this.cancelExit();
+    }
+
     if (!this._initialized) {
-      this.target.copy(this._rawTarget);
-      this.smooth.copy(this._rawTarget);
-      this._prevSmooth.copy(this._rawTarget);
-      this._prevRaw.copy(this._rawTarget);
-      this.group.position.copy(this.smooth);
-      this._initialized = true;
-    } else {
+      this.beginSpawn(this._rawTarget.clone());
+    } else if (this.life !== "exiting") {
       const dx = this._rawTarget.x - this._prevRaw.x;
       const dz = this._rawTarget.z - this._prevRaw.z;
       const rawJump = Math.hypot(dx, dz);
@@ -306,8 +408,61 @@ class PersonAgent {
   }
 
   tick(dt) {
+    if (this._disposed) return;
+
     if (!this._initialized) {
       this.mixer.update(dt);
+      return;
+    }
+
+    // 出场淡入 / 离场淡出
+    if (this.life === "spawning") {
+      this._setVisualFade(this._fade + dt / SPAWN_FADE_SEC);
+      if (this._fade >= 1) {
+        this._setVisualFade(1);
+        this.life = "active";
+      }
+    } else if (this.life === "exiting") {
+      this._setVisualFade(this._fade - dt / EXIT_FADE_SEC);
+    }
+
+    this._prevSmooth.copy(this.smooth);
+    const now = performance.now();
+
+    if (this.life === "exiting") {
+      // 沿最后行进方向继续走远，同时淡出
+      const v = WALK_PACE;
+      const step = v * dt;
+      this.smooth.x += this._travelX * step;
+      this.smooth.z += this._travelZ * step;
+      this.displaySpeed = v;
+      this._moving = true;
+      this._walking = true;
+      this._updateHeading(Math.atan2(this._travelX, this._travelZ), now);
+
+      const curY = this.group.rotation.y;
+      const diff = this._angleDiff(this.heading, curY);
+      this.group.rotation.y = curY + diff * Math.min(1, HEADING_TURN * dt);
+      this.group.position.copy(this.smooth);
+
+      this._play("Walk");
+      if (this.currentAction) {
+        this.currentAction.setEffectiveTimeScale(1);
+      }
+      this.mixer.update(dt);
+
+      const last = this.trailPoints[this.trailPoints.length - 1];
+      if (!last || last.distanceTo(this.smooth) > 0.35) {
+        this.trailPoints.push(this.smooth.clone());
+        if (this.trailPoints.length > MAX_TRAIL_POINTS) {
+          this.trailPoints.shift();
+        }
+        this.trailGeom.setFromPoints(this.trailPoints);
+      }
+
+      if (this._fade <= 0) {
+        this.dispose();
+      }
       return;
     }
 
@@ -318,11 +473,8 @@ class PersonAgent {
     const offsetZ = this.target.z - this.smooth.z;
     const dist = Math.hypot(offsetX, offsetZ);
 
-    this._prevSmooth.copy(this.smooth);
-
-    const now = performance.now();
     const locoActive = now < this._locoUntil;
-    const shouldWalk = dist > WALK_STOP_DIST || locoActive;
+    const shouldWalk = dist > WALK_STOP_DIST || locoActive || this.life === "spawning";
 
     if (shouldWalk) {
       this._walking = true;
@@ -403,6 +555,9 @@ class PersonAgent {
   }
 
   dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    this.life = "disposed";
     scene.remove(this.group);
     scene.remove(this.trailLine);
     this.trailGeom.dispose();
@@ -620,14 +775,16 @@ function animate() {
   animFrameId = requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
 
-  for (const agent of agents.values()) {
+  for (const [id, agent] of [...agents.entries()]) {
     agent.tick(dt);
+    if (agent._disposed) agents.delete(id);
   }
 
   if (followCam.checked && agents.size > 0) {
     let nearest = null;
     let best = Infinity;
     for (const a of agents.values()) {
+      if (a.life === "exiting" || a._disposed) continue;
       if (a.distance < best) {
         best = a.distance;
         nearest = a;
@@ -652,15 +809,13 @@ function syncAgents(persons) {
 
   for (const p of persons) {
     let agent = agents.get(p.person_id);
-    if (!agent) {
+    if (!agent || agent._disposed) {
       if (!modelReady) continue;
+      if (agent?._disposed) agents.delete(p.person_id);
       agent = new PersonAgent(p.person_id, templateModel, templateAnimations);
-      toWorldPos(p.ground_x, p.ground_y, agent.smooth);
-      agent.target.copy(agent.smooth);
-      agent._rawTarget.copy(agent.smooth);
-      agent._prevRaw.copy(agent.smooth);
-      agent.group.position.copy(agent.smooth);
-      agent._initialized = true;
+      const spawnAt = new THREE.Vector3();
+      toWorldPos(p.ground_x, p.ground_y, spawnAt);
+      agent.beginSpawn(spawnAt);
       agents.set(p.person_id, agent);
     }
     agent.updateFromApi(p);
@@ -668,9 +823,12 @@ function syncAgents(persons) {
 
   const now = performance.now();
   for (const [id, agent] of agents) {
-    if (!liveIds.has(id) && now - agent.lastSeen > 3000) {
-      agent.dispose();
+    if (agent._disposed) {
       agents.delete(id);
+      continue;
+    }
+    if (!liveIds.has(id) && now - agent.lastSeen > LOST_GRACE_MS) {
+      agent.beginExit();
     }
   }
 }

@@ -17,6 +17,7 @@
 - **方向判断**：距离持续减少 → 靠近摄像头；持续增加 → 远离摄像头
 - **RTSP / 本地视频**：TCP 传输、小缓冲、流断线自动重连；本地文件支持循环播放
 - **画面标注**：OpenCV 英文叠加（低延迟，无 PIL 整帧转换）
+- **3D 轨迹进出场**：人物模型从检测区外侧淡入走进，丢失跟踪后沿行进方向走离并淡出，避免凭空出现/消失
 
 ## 系统架构
 
@@ -224,6 +225,16 @@ python web/server.py
 4. 根据速度切换 Idle / Walk / Run，并绘制彩色轨迹线
 5. 左键拖拽旋转、中键/右键平移、滚轮缩放；可跟随最近人员或清空轨迹
 
+**人物生命周期（符合自然出现/消失）：**
+
+| 阶段 | 行为 |
+|------|------|
+| 出场 `spawning` | 在检测落点外侧约 2.4m 生成，朝落点走入，约 0.7s 淡入并略微放大 |
+| 在场 `active` | 平滑追赶地面坐标，按速度播 Idle / Walk / Run，累积轨迹线 |
+| 离场 `exiting` | 跟踪丢失约 3 秒后，沿最后行进方向继续走，约 0.9s 淡出后移除；若跟踪恢复则取消离场并淡回 |
+
+落点使用标定地面直角坐标 `(ground_x, ground_y)`（非极径距离 D），3D 中世界坐标为 `(worldX, worldZ) = (-ground_x, ground_y)`。
+
 Web 服务提供标定页（`/`）、监控页（`/monitor`）与 3D 轨迹页（`/trajectory`），共用 `config/config.yaml` 中的视频源与标定文件。
 
 ## 画面标注说明
@@ -405,7 +416,7 @@ yolo判断距离速度/
 ├── web/
 │   ├── server.py                # FastAPI：标定 + 实时监控 + 3D 轨迹
 │   └── static/                  # 前端（标定 / 监控 / Three.js 轨迹）
-│       └── models/Soldier.glb   # 真人骨骼模型（Idle/Walk/Run）
+│       └── models/Human.glb     # 真人骨骼模型（Idle/Walk/Run）
 ├── requirements.txt
 └── README.md
 ```
