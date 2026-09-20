@@ -87,6 +87,7 @@ const stopBtn = document.getElementById("stopBtn");
 const resetCamBtn = document.getElementById("resetCamBtn");
 const clearTrailBtn = document.getElementById("clearTrailBtn");
 const followCam = document.getElementById("followCam");
+const showCoords = document.getElementById("showCoords");
 const videoPip = document.getElementById("videoPip");
 const videoPipWrap = document.getElementById("videoPipWrap");
 const videoPipToggle = document.getElementById("videoPipToggle");
@@ -373,7 +374,12 @@ class PersonAgent {
 
     const el = this.label.element;
     el.className = `person-label ${this.direction}`;
-    el.textContent = `#${this.personId}  x:${this.camX.toFixed(1)}  y:${this.camY.toFixed(1)}`;
+    const speedStr = `${this.speed.toFixed(1)} m/s`;
+    if (showCoords?.checked) {
+      el.textContent = `#${this.personId}  ${speedStr}  x:${this.camX.toFixed(1)}  y:${this.camY.toFixed(1)}`;
+    } else {
+      el.textContent = `#${this.personId}  ${speedStr}`;
+    }
   }
 
   _angleDiff(a, b) {
