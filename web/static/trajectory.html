@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>3D 人员轨迹 - 人员距离速度</title>
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="stylesheet" href="/static/trajectory.css">
+  <link rel="stylesheet" href="/static/trajectory.css?v=5">
   <script type="importmap">
   {
     "imports": {
@@ -33,15 +33,11 @@
       <div class="toolbar">
         <button type="button" class="btn btn-primary" id="startBtn">开始检测</button>
         <button type="button" class="btn btn-danger" id="stopBtn" disabled>停止</button>
-        <button type="button" class="btn" id="resetCamBtn">摄像头视角</button>
+        <button type="button" class="btn" id="resetCamBtn">重置视角</button>
         <button type="button" class="btn" id="clearTrailBtn">清空轨迹</button>
         <label class="trail-toggle">
           <input type="checkbox" id="followCam" />
           跟随最近人员
-        </label>
-        <label class="trail-toggle" title="若与视频左右相反可勾选">
-          <input type="checkbox" id="mirrorX" />
-          镜像左右
         </label>
         <span id="fpsBadge" class="badge">FPS: -</span>
         <span id="detectBadge" class="badge">未运行</span>
@@ -52,9 +48,12 @@
       <div id="viewport" class="viewport">
         <div id="viewportPlaceholder" class="placeholder viewport-placeholder">
           <p>点击「开始检测」加载 3D 场景</p>
-          <p style="font-size:0.85rem;margin-top:8px">落点 = 摄像头地面直角坐标 (x, y)，单位米</p>
+          <p style="font-size:0.85rem;margin-top:8px">落点 = 相对标定原点的地面坐标 (x, y)，单位米</p>
         </div>
-        <img id="videoPip" class="video-pip" alt="监控画面" hidden>
+        <div id="videoPipWrap" class="video-pip-wrap" hidden>
+          <img id="videoPip" class="video-pip" alt="监控画面">
+          <button type="button" id="videoPipToggle" class="video-pip-toggle" title="放大/缩小">⤢</button>
+        </div>
       </div>
     </div>
 
@@ -66,16 +65,15 @@
 
       <h2>坐标说明</h2>
       <ol class="steps">
-        <li>原点 O = 摄像头正下方地面点</li>
+        <li>原点 O = 标定时指定的地面原点</li>
         <li><strong>x</strong> = 横向（左负右正）</li>
-        <li><strong>y</strong> = 纵深（沿摄像头主视野）</li>
+        <li><strong>y</strong> = 纵深</li>
         <li>人员落点用 (x, y)，不是极径距离 D</li>
-        <li>3D 中水平面：X→x，Z→y</li>
-        <li>右下角可对照实时监控画面</li>
+        <li>3D 中：世界 X = -标定 x，世界 Z = 标定 y</li>
       </ol>
     </aside>
   </div>
 
-  <script type="module" src="/static/trajectory.js"></script>
+  <script type="module" src="/static/trajectory.js?v=11"></script>
 </body>
 </html>

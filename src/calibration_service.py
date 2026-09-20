@@ -18,11 +18,6 @@ def get_label(index: int) -> str:
     return f"P{index}"
 
 
-def ground_from_distance(distance: float, lateral: float = 0.0) -> tuple[float, float]:
-    """主视野方向为 Y 轴，横向偏移为 X 轴"""
-    return lateral, distance
-
-
 def capture_frame(source: str, config: dict | None = None) -> np.ndarray:
     from src.video_source import is_rtsp, open_video_capture, resolve_path
 
@@ -73,12 +68,17 @@ def resolve_homography_path(config_path: str = "config/config.yaml") -> str:
 def validate_calibration(
     pixel_points: list[list[float]],
     ground_points: list[list[float]],
+    labels: list[str] | None = None,
 ) -> dict:
     if len(pixel_points) < 4 or len(ground_points) < 4:
-        raise ValueError("至少需要 4 个标定点")
+        raise ValueError("至少需要 4 个标定点（含原点）")
 
     pixel_tuples = [(float(p[0]), float(p[1])) for p in pixel_points]
     ground_tuples = [(float(g[0]), float(g[1])) for g in ground_points]
+
+    has_origin = any(abs(g[0]) < 1e-9 and abs(g[1]) < 1e-9 for g in ground_tuples)
+    if not has_origin:
+        raise ValueError("请先指定原点 O（地面坐标 0, 0）")
 
     spread = check_ground_points_spread(ground_tuples)
     transformer = HomographyTransformer.from_points(pixel_tuples, ground_tuples)
@@ -88,13 +88,17 @@ def validate_calibration(
         gx, gy = transformer.pixel_to_ground(px, py)
         expected = ground_tuples[i]
         error = ((gx - expected[0]) ** 2 + (gy - expected[1]) ** 2) ** 0.5
-        dist = (gx ** 2 + gy ** 2) ** 0.5
+        if labels and i < len(labels):
+            label = labels[i]
+        elif abs(expected[0]) < 1e-9 and abs(expected[1]) < 1e-9:
+            label = "O"
+        else:
+            label = get_label(i)
         verification.append({
-            "label": get_label(i),
+            "label": label,
             "pixel": [round(px, 1), round(py, 1)],
             "ground": [round(gx, 2), round(gy, 2)],
             "expected_ground": [round(expected[0], 2), round(expected[1], 2)],
-            "distance_from_o": round(dist, 2),
             "error_m": round(error, 3),
         })
 
@@ -109,8 +113,9 @@ def save_calibration(
     pixel_points: list[list[float]],
     ground_points: list[list[float]],
     output_path: str,
+    labels: list[str] | None = None,
 ) -> dict:
-    result = validate_calibration(pixel_points, ground_points)
+    result = validate_calibration(pixel_points, ground_points, labels=labels)
     pixel_tuples = [(float(p[0]), float(p[1])) for p in pixel_points]
     ground_tuples = [(float(g[0]), float(g[1])) for g in ground_points]
 

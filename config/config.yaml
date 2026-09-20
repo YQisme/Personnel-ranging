@@ -30,8 +30,9 @@ tracking:
   persist: true
 
 # 摄像机标定
-# 距离定义: 摄像头地面投影点 O(0,0) → 人员脚点的地面距离 D = sqrt(X²+Y²)
-# 使用 calibrate.py 标定: 先点 O，再沿地面距离链标定 5m/10m/15m/20m...
+# 先指定原点 O(0,0)，再标定多个点的相对地面坐标 (X, Y) 米
+# 人物框显示相对原点的 X、Y；距离 D = sqrt(X²+Y²) 仍用于速度/靠近远离判断
+# Web 或 calibrate.py: 先点 O，再点其他点并输入 (x, y)
 calibration:
   homography_file: "config/homography_matrix.npy"
 

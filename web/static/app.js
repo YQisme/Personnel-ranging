@@ -17,13 +17,29 @@ const verifyBox = document.getElementById("verifyBox");
 const canvasWrap = document.getElementById("canvasWrap");
 const placeholder = document.getElementById("placeholder");
 const modal = document.getElementById("pointModal");
-const distanceInput = document.getElementById("distanceInput");
-const lateralInput = document.getElementById("lateralInput");
+const groundXInput = document.getElementById("groundXInput");
+const groundYInput = document.getElementById("groundYInput");
 const modalTitle = document.getElementById("modalTitle");
 const modalPixel = document.getElementById("modalPixel");
 
-function getLabel(i) {
-  return i < POINT_LABELS.length ? POINT_LABELS[i] : `P${i + 1}`;
+function hasOrigin() {
+  return state.points.some((p) => p.is_origin);
+}
+
+function relabelPoints() {
+  let nonOriginIdx = 0;
+  state.points.forEach((p) => {
+    if (p.is_origin) {
+      p.label = "O";
+      p.ground_x = 0;
+      p.ground_y = 0;
+    } else {
+      p.label = nonOriginIdx < POINT_LABELS.length
+        ? POINT_LABELS[nonOriginIdx]
+        : `P${nonOriginIdx + 1}`;
+      nonOriginIdx += 1;
+    }
+  });
 }
 
 function showMessage(text, type = "success") {
@@ -103,29 +119,37 @@ function imageToCanvas(x, y) {
   return { x: x * scaleX, y: y * scaleY };
 }
 
+function formatXY(gx, gy) {
+  return `(${Number(gx).toFixed(1)}, ${Number(gy).toFixed(1)})m`;
+}
+
 function draw() {
   if (!state.image) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(state.image, 0, 0, canvas.width, canvas.height);
 
-  if (state.points.length >= 2) {
-    ctx.beginPath();
-    const first = imageToCanvas(state.points[0].pixel_x, state.points[0].pixel_y);
-    ctx.moveTo(first.x, first.y);
-    for (let i = 1; i < state.points.length; i++) {
-      const p = imageToCanvas(state.points[i].pixel_x, state.points[i].pixel_y);
+  // 从原点连线到各标定点
+  const origin = state.points.find((p) => p.is_origin);
+  if (origin && state.points.length >= 2) {
+    const o = imageToCanvas(origin.pixel_x, origin.pixel_y);
+    state.points.forEach((pt) => {
+      if (pt.is_origin) return;
+      const p = imageToCanvas(pt.pixel_x, pt.pixel_y);
+      ctx.beginPath();
+      ctx.moveTo(o.x, o.y);
       ctx.lineTo(p.x, p.y);
-    }
-    ctx.strokeStyle = "#06b6d4";
-    ctx.lineWidth = 2;
-    ctx.stroke();
+      ctx.strokeStyle = "rgba(6, 182, 212, 0.7)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
   }
 
   state.points.forEach((pt) => {
     const { x, y } = imageToCanvas(pt.pixel_x, pt.pixel_y);
+    const fill = pt.is_origin ? "#f97316" : "#22c55e";
     ctx.beginPath();
-    ctx.arc(x, y, 7, 0, Math.PI * 2);
-    ctx.fillStyle = "#22c55e";
+    ctx.arc(x, y, pt.is_origin ? 9 : 7, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
     ctx.fill();
     ctx.strokeStyle = "#fff";
     ctx.lineWidth = 2;
@@ -133,7 +157,10 @@ function draw() {
 
     ctx.font = "bold 13px sans-serif";
     ctx.fillStyle = "#fff";
-    ctx.fillText(`${pt.label} ${pt.distance}m`, x + 10, y - 8);
+    const text = pt.is_origin
+      ? "O (0, 0)"
+      : `${pt.label} ${formatXY(pt.ground_x, pt.ground_y)}`;
+    ctx.fillText(text, x + 10, y - 8);
   });
 }
 
@@ -142,12 +169,12 @@ function renderPointList() {
   state.points.forEach((pt, i) => {
     const li = document.createElement("li");
     li.className = "point-item";
+    const meta = pt.is_origin
+      ? `像素 (${pt.pixel_x.toFixed(0)}, ${pt.pixel_y.toFixed(0)})<br>原点 (0, 0)m`
+      : `像素 (${pt.pixel_x.toFixed(0)}, ${pt.pixel_y.toFixed(0)})<br>相对 O：x=${pt.ground_x}m，y=${pt.ground_y}m`;
     li.innerHTML = `
-      <span class="label">${pt.label}</span>
-      <span class="meta">
-        像素 (${pt.pixel_x.toFixed(0)}, ${pt.pixel_y.toFixed(0)})<br>
-        距 O ${pt.distance}m，横向 ${pt.lateral}m
-      </span>
+      <span class="label"${pt.is_origin ? ' style="color:#f97316"' : ""}>${pt.label}</span>
+      <span class="meta">${meta}</span>
       <button type="button" data-index="${i}">删除</button>
     `;
     pointList.appendChild(li);
@@ -156,27 +183,37 @@ function renderPointList() {
   pointList.querySelectorAll("button").forEach((btn) => {
     btn.addEventListener("click", () => {
       const idx = parseInt(btn.dataset.index, 10);
-      state.points.splice(idx, 1);
-      state.points.forEach((p, j) => { p.label = getLabel(j); });
+      const removed = state.points[idx];
+      if (removed?.is_origin) {
+        state.points = [];
+        showMessage("已删除原点，请重新点击画面指定原点", "warning");
+      } else {
+        state.points.splice(idx, 1);
+        relabelPoints();
+      }
       renderPointList();
       draw();
       verifyBox.hidden = true;
     });
   });
 
-  document.getElementById("saveBtn").disabled = state.points.length < 4;
-  document.getElementById("validateBtn").disabled = state.points.length < 4;
+  const ready = state.points.length >= 4 && hasOrigin();
+  document.getElementById("saveBtn").disabled = !ready;
+  document.getElementById("validateBtn").disabled = !ready;
 }
 
 function openModal(pixelX, pixelY) {
-  const idx = state.points.length;
-  modalTitle.textContent = `标定点 ${getLabel(idx)}`;
-  modalPixel.textContent = `像素坐标: (${pixelX.toFixed(0)}, ${pixelY.toFixed(0)})`;
-  distanceInput.value = "";
-  lateralInput.value = "0";
+  const nonOriginCount = state.points.filter((p) => !p.is_origin).length;
+  const label = nonOriginCount < POINT_LABELS.length
+    ? POINT_LABELS[nonOriginCount]
+    : `P${nonOriginCount + 1}`;
+  modalTitle.textContent = `标定点 ${label}`;
+  modalPixel.textContent = `像素坐标: (${pixelX.toFixed(0)}, ${pixelY.toFixed(0)}) · 相对原点的地面坐标`;
+  groundXInput.value = "";
+  groundYInput.value = "";
   state.pendingClick = { pixel_x: pixelX, pixel_y: pixelY };
   modal.classList.remove("hidden");
-  distanceInput.focus();
+  groundXInput.focus();
 }
 
 function closeModal() {
@@ -186,26 +223,46 @@ function closeModal() {
 
 function confirmModal() {
   if (!state.pendingClick) return;
-  const distance = parseFloat(distanceInput.value);
-  const lateral = parseFloat(lateralInput.value) || 0;
-  if (isNaN(distance) || distance <= 0) {
-    showMessage("请输入有效的距 O 距离（米）", "error");
+  const gx = parseFloat(groundXInput.value);
+  const gy = parseFloat(groundYInput.value);
+  if (isNaN(gx) || isNaN(gy)) {
+    showMessage("请输入有效的 x、y 坐标（米）", "error");
     return;
   }
-  const idx = state.points.length;
+  if (Math.abs(gx) < 1e-9 && Math.abs(gy) < 1e-9) {
+    showMessage("非原点请勿填 (0, 0)，请点击画面重新指定原点", "error");
+    return;
+  }
+  const nonOriginCount = state.points.filter((p) => !p.is_origin).length;
+  const label = nonOriginCount < POINT_LABELS.length
+    ? POINT_LABELS[nonOriginCount]
+    : `P${nonOriginCount + 1}`;
   state.points.push({
-    label: getLabel(idx),
+    label,
+    is_origin: false,
     pixel_x: state.pendingClick.pixel_x,
     pixel_y: state.pendingClick.pixel_y,
-    ground_x: lateral,
-    ground_y: distance,
-    distance: distance,
-    lateral: lateral,
+    ground_x: gx,
+    ground_y: gy,
   });
   closeModal();
   renderPointList();
   draw();
   verifyBox.hidden = true;
+}
+
+function addOrigin(pixelX, pixelY) {
+  state.points.unshift({
+    label: "O",
+    is_origin: true,
+    pixel_x: pixelX,
+    pixel_y: pixelY,
+    ground_x: 0,
+    ground_y: 0,
+  });
+  showMessage("已设定原点 O (0, 0)，继续点击添加标定点并输入 (x, y)", "success");
+  renderPointList();
+  draw();
 }
 
 canvas.addEventListener("click", (e) => {
@@ -214,7 +271,11 @@ canvas.addEventListener("click", (e) => {
   const cx = e.clientX - rect.left;
   const cy = e.clientY - rect.top;
   const { x, y } = canvasToImage(cx, cy);
-  openModal(x, y);
+  if (!hasOrigin()) {
+    addOrigin(x, y);
+  } else {
+    openModal(x, y);
+  }
 });
 
 document.getElementById("captureBtn").addEventListener("click", captureFrame);
@@ -263,7 +324,7 @@ document.getElementById("validateBtn").addEventListener("click", async () => {
     if (!res.ok) throw new Error(data.detail || "验证失败");
     showVerifyResult(data);
     if (data.collinear_warning) {
-      showMessage("标定点几乎共线，建议增加左右横向偏移点", "warning");
+      showMessage("标定点几乎共线，建议增加分散的横向/纵向点", "warning");
     } else {
       showMessage("验证通过，可以保存", "success");
     }
@@ -293,15 +354,15 @@ function showVerifyResult(data) {
   verifyBox.hidden = false;
   let html = "";
   if (data.collinear_warning) {
-    html += `<div class="alert alert-warning">标定点几乎共线，建议在同一距离增加左右横向点</div>`;
+    html += `<div class="alert alert-warning">标定点几乎共线，建议增加分散的横向/纵向点</div>`;
   }
   html += `<table class="verify-table">
-    <thead><tr><th>点</th><th>地面坐标</th><th>距 O</th><th>误差</th></tr></thead><tbody>`;
+    <thead><tr><th>点</th><th>期望 (x,y)</th><th>拟合 (x,y)</th><th>误差</th></tr></thead><tbody>`;
   data.verification.forEach((v) => {
     html += `<tr>
       <td>${v.label}</td>
+      <td>(${v.expected_ground[0]}, ${v.expected_ground[1]})m</td>
       <td>(${v.ground[0]}, ${v.ground[1]})m</td>
-      <td>${v.distance_from_o}m</td>
       <td>${v.error_m}m</td>
     </tr>`;
   });
@@ -312,14 +373,34 @@ function showVerifyResult(data) {
 async function loadExisting() {
   const res = await fetch("/api/existing");
   const data = await res.json();
-  if (!data.points?.length) return;
-  state.points = data.points.map((p, i) => ({
-    ...p,
-    label: getLabel(i),
-  }));
+  if (!data.points?.length) {
+    showMessage("没有已保存的标定点", "warning");
+    return;
+  }
+  state.points = data.points.map((p) => {
+    const isOrigin = Boolean(p.is_origin) ||
+      (Math.abs(p.ground_x) < 1e-6 && Math.abs(p.ground_y) < 1e-6);
+    return {
+      label: isOrigin ? "O" : p.label,
+      is_origin: isOrigin,
+      pixel_x: p.pixel_x,
+      pixel_y: p.pixel_y,
+      ground_x: isOrigin ? 0 : p.ground_x,
+      ground_y: isOrigin ? 0 : p.ground_y,
+    };
+  });
+  // 若旧标定无原点，提示用户补点
+  if (!hasOrigin()) {
+    showMessage(
+      `已导入 ${state.points.length} 个点，但缺少原点。请先点击画面指定原点 O`,
+      "warning",
+    );
+  } else {
+    relabelPoints();
+    showMessage(`已导入 ${state.points.length} 个标定点`, "success");
+  }
   renderPointList();
   draw();
-  showMessage(`已导入 ${state.points.length} 个标定点（旧版 O 点已自动忽略）`, "success");
 }
 
 window.addEventListener("resize", resizeCanvas);

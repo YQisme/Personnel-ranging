@@ -77,7 +77,7 @@ function renderPersons(persons) {
     li.innerHTML = `
       <span class="label" style="color:${color}">#${p.person_id}</span>
       <span class="meta">
-        距摄像头 <strong>${p.distance}m</strong><br>
+        相对原点 <strong>x=${p.ground_x}m</strong>, <strong>y=${p.ground_y}m</strong><br>
         速度 ${p.speed} m/s (${p.speed_kmh} km/h)<br>
         ${dir}
       </span>

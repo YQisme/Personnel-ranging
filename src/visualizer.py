@@ -44,7 +44,8 @@ def draw_person_info(frame, state: PersonMotionState):
     direction_text = DIRECTION_LABELS.get(state.direction, "Unknown")
     lines = [
         f"#{state.person_id}",
-        f"Dist {state.distance:.2f}m",
+        f"X {state.ground_x:.2f}m",
+        f"Y {state.ground_y:.2f}m",
         f"Speed {state.speed:.2f}m/s ({state.speed_kmh:.1f}km/h)",
         direction_text,
     ]
@@ -52,7 +53,7 @@ def draw_person_info(frame, state: PersonMotionState):
 
 
 def draw_camera_marker(frame, pixel_x: float, pixel_y: float):
-    """绘制摄像头地面投影点 O（若在画面外则不绘制）"""
+    """绘制标定原点 O（若在画面外则不绘制）"""
     h, w = frame.shape[:2]
     x, y = int(pixel_x), int(pixel_y)
     if x < 0 or x >= w or y < 0 or y >= h:
@@ -60,4 +61,4 @@ def draw_camera_marker(frame, pixel_x: float, pixel_y: float):
     color = (255, 100, 0)
     cv2.drawMarker(frame, (x, y), color, cv2.MARKER_TILTED_CROSS, 24, 2)
     cv2.circle(frame, (x, y), 10, color, 2)
-    cv2.putText(frame, "O", (x + 14, y - 20), _FONT, 0.5, color, 2, cv2.LINE_AA)
+    cv2.putText(frame, "O", (x + 14, y - 8), _FONT, 0.6, color, 2, cv2.LINE_AA)

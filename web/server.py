@@ -153,21 +153,22 @@ async def api_existing():
     points = []
     pixel_pts = meta.get("pixel_points", [])
     ground_pts = meta.get("ground_points", [])
+    non_origin_idx = 0
     for i, (px, py) in enumerate(pixel_pts):
         gx, gy = ground_pts[i]
-        # 跳过旧版 workflow 留在 json 里的 O 点 (0,0)
-        if abs(gx) < 1e-6 and abs(gy) < 1e-6:
-            continue
-        dist = (gx ** 2 + gy ** 2) ** 0.5
-        idx = len(points)
+        is_origin = abs(gx) < 1e-6 and abs(gy) < 1e-6
+        if is_origin:
+            label = "O"
+        else:
+            label = get_label(non_origin_idx)
+            non_origin_idx += 1
         points.append({
-            "label": get_label(idx),
+            "label": label,
+            "is_origin": is_origin,
             "pixel_x": px,
             "pixel_y": py,
             "ground_x": gx,
             "ground_y": gy,
-            "distance": dist,
-            "lateral": gx,
         })
     return {"points": points}
 
@@ -177,7 +178,8 @@ async def api_validate(req: CalibrateRequest):
     try:
         pixel_points = [[p["pixel_x"], p["pixel_y"]] for p in req.points]
         ground_points = [[p["ground_x"], p["ground_y"]] for p in req.points]
-        return validate_calibration(pixel_points, ground_points)
+        labels = [str(p.get("label", get_label(i))) for i, p in enumerate(req.points)]
+        return validate_calibration(pixel_points, ground_points, labels=labels)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -187,8 +189,9 @@ async def api_save(req: CalibrateRequest):
     try:
         pixel_points = [[p["pixel_x"], p["pixel_y"]] for p in req.points]
         ground_points = [[p["ground_x"], p["ground_y"]] for p in req.points]
+        labels = [str(p.get("label", get_label(i))) for i, p in enumerate(req.points)]
         output = resolve_homography_path(str(CONFIG_PATH))
-        return save_calibration(pixel_points, ground_points, output)
+        return save_calibration(pixel_points, ground_points, output, labels=labels)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>摄像机距离链标定</title>
+  <title>摄像机地面标定</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header>
     <div>
-      <h1>摄像机距离链标定</h1>
-      <p>在画面上标定可见地面点，输入卷尺实测的距 O 距离</p>
+      <h1>摄像机地面标定</h1>
+      <p>先指定原点 O，再标定多个点相对原点的地面坐标 (x, y)</p>
     </div>
     <nav class="nav-tabs">
       <a href="/" class="nav-tab active">标定</a>
@@ -46,14 +46,14 @@
     <aside class="sidebar">
       <h2>标定步骤</h2>
       <div class="alert alert-warning" style="margin-bottom:12px">
-        O 点是摄像头地面投影的<strong>坐标原点</strong>，通常<strong>不在画面内</strong>（在镜头正下方、画面外）。无需在画面上点击 O，只需标定<strong>能看见的地面点</strong>。
+        先在画面上点击<strong>原点 O</strong>（地面坐标固定为 0, 0），再点击其他地面点，输入相对 O 的实测 <strong>(x, y)</strong> 米。
       </div>
       <ol class="steps">
         <li><strong>1.</strong> 抓拍或上传监控画面</li>
-        <li><strong>2.</strong> 在地面用卷尺从 O 点量出距离（如 5m、10m、15m、20m）</li>
-        <li><strong>3.</strong> 在画面上点击该地面位置，输入实测距离</li>
-        <li><strong>4.</strong> 建议加左右横向偏移点提高精度</li>
-        <li><strong>5.</strong> 至少 4 个点后保存</li>
+        <li><strong>2.</strong> 点击画面选定原点 O（坐标 0, 0）</li>
+        <li><strong>3.</strong> 点击其他地面点，输入相对 O 的 x、y（米）</li>
+        <li><strong>4.</strong> 点位尽量分散，避免共线</li>
+        <li><strong>5.</strong> 至少 4 个点（含 O）后保存</li>
       </ol>
 
       <h2>标定点列表</h2>
@@ -69,13 +69,13 @@
       <h3 id="modalTitle">标定点</h3>
       <p id="modalPixel" style="color:#8b9cb3;font-size:0.9rem;margin-bottom:16px"></p>
       <div class="field">
-        <label for="distanceInput">该点距 O 的地面距离 (米)</label>
-        <input type="number" id="distanceInput" min="0.1" step="0.1" placeholder="卷尺实测，如 5、10、15、20">
+        <label for="groundXInput">相对原点的 X (米)</label>
+        <input type="number" id="groundXInput" step="0.1" placeholder="横向，左负右正，如 -2、0、3">
       </div>
       <div class="field">
-        <label for="lateralInput">横向偏移 (米)</label>
-        <input type="number" id="lateralInput" step="0.1" value="0" placeholder="左负右正，默认 0">
-        <div class="hint">点在主视野正前方线上为 0；偏左/偏右填实测横向距离</div>
+        <label for="groundYInput">相对原点的 Y (米)</label>
+        <input type="number" id="groundYInput" step="0.1" placeholder="纵向，如 5、10、15">
+        <div class="hint">用卷尺从原点量到该点的地面坐标 (x, y)，单位米</div>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn" id="modalCancel">取消</button>
@@ -84,6 +84,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

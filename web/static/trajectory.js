@@ -24,25 +24,45 @@ const MODEL_SCALE = 1.0;
 const MODEL_Y_OFFSET = 0;
 const WS_RECONNECT_MS = 1500;
 
-/** 小于此位移（米）视为检测噪声，不更新目标点 */
-const POS_DEADZONE = 0.45;
-/** 走到目标附近视为到达 */
-const ARRIVE_EPS = 0.2;
-/** 低于此速度（m/s）视为静止 */
-const IDLE_SPEED = 0.4;
+/** 小于此位移（米）视为检测噪声，忽略 */
+const POS_DEADZONE = 0.1;
+/** 开始走路的距离阈值（保留备用） */
+const WALK_START_DIST = 0.28;
+/** 小于此距离视为贴住目标 */
+const WALK_STOP_DIST = 0.08;
+/** 检测速度低于此视为静止 */
+const IDLE_SPEED = 0.25;
 const RUN_SPEED = 2.2;
-/** 走路动画对应的标称步速（米/秒），用于匹配步频 */
-const WALK_PACE = 1.25;
+/** 走路动画对应的标称步速（米/秒） */
+const WALK_PACE = 1.2;
+/** 追目标最低移动速度 */
+const MIN_CHASE_SPEED = 0.85;
+/** 目标点平滑 */
+const TARGET_FOLLOW = 5.0;
+/** 检测位移超过此值才计入行进方向（米） */
+const TRAVEL_MIN_STEP = 0.08;
+/** 行进方向 EMA */
+const TRAVEL_DIR_ALPHA = 0.4;
+/** 朝向小幅修正阈值（弧度） */
+const HEADING_SNAP_RAD = 0.5;
+/** 中等转向确认时间 */
+const HEADING_TURN_MS = 180;
+/** 大角度转向确认时间 */
+const HEADING_FLIP_MS = 450;
+/** 朝向转动速度 */
+const HEADING_TURN = 4.0;
+/** 用追赶偏移补朝向的最小距离 */
+const HEADING_FALLBACK_DIST = 0.45;
 
 /**
- * 人员落点用摄像头地面坐标系直角坐标，不用极径距离 D。
- *   camX = ground_x  横向（左负右正）
- *   camY = ground_y  纵深（沿主视野，米）
- * Three.js：水平面 (worldX, worldZ) = (sign*camX, camY)，竖直为 worldY。
+ * 人员落点用标定原点地面直角坐标，不用极径距离 D。
+ *   ground_x  横向（标定：左负右正）
+ *   ground_y  纵深
+ * Three.js：水平面 (worldX, worldZ) = (-ground_x, ground_y)，竖直为 worldY。
+ * 对 X 取反，使从 +Z 方向看时与监控画面左右一致。
  */
-function toWorldPos(camX, camY, out) {
-  const sign = mirrorX?.checked ? -1 : 1;
-  out.set(sign * camX, 0, camY);
+function toWorldPos(groundX, groundY, out) {
+  out.set(-groundX, 0, groundY);
   return out;
 }
 
@@ -54,8 +74,9 @@ const stopBtn = document.getElementById("stopBtn");
 const resetCamBtn = document.getElementById("resetCamBtn");
 const clearTrailBtn = document.getElementById("clearTrailBtn");
 const followCam = document.getElementById("followCam");
-const mirrorX = document.getElementById("mirrorX");
 const videoPip = document.getElementById("videoPip");
+const videoPipWrap = document.getElementById("videoPipWrap");
+const videoPipToggle = document.getElementById("videoPipToggle");
 const fpsBadge = document.getElementById("fpsBadge");
 const detectBadge = document.getElementById("detectBadge");
 const messageBox = document.getElementById("messageBox");
@@ -91,6 +112,8 @@ class PersonAgent {
     });
     this.model.scale.setScalar(MODEL_SCALE);
     this.model.position.y = MODEL_Y_OFFSET;
+    // Soldier.glb 默认面朝 -Z；转到 +Z，使 group.rotation.y = atan2(dx,dz) 为正前方
+    this.model.rotation.y = Math.PI;
     this.group.add(this.model);
 
     this.mixer = new THREE.AnimationMixer(this.model);
@@ -116,6 +139,16 @@ class PersonAgent {
     this.trailPoints = [];
     this.lastSeen = performance.now();
     this._moving = false;
+    this._walking = false;
+    this._initialized = false;
+    this._prevSmooth = new THREE.Vector3();
+    this._prevRaw = new THREE.Vector3();
+    this._locoUntil = 0;
+    this._travelX = 0;
+    this._travelZ = 1;
+    this._travelValid = false;
+    this._pendingHeading = null;
+    this._pendingSince = 0;
 
     this.trailGeom = new THREE.BufferGeometry();
     this.trailMat = new THREE.LineBasicMaterial({
@@ -139,11 +172,17 @@ class PersonAgent {
 
   _play(name) {
     const next = this.actions[name] || this.actions.Idle;
-    if (!next || this.currentAction === next) return;
+    if (!next) return;
+    if (this.currentAction === next) return;
     if (this.currentAction) {
-      this.currentAction.fadeOut(0.25);
+      this.currentAction.fadeOut(0.2);
     }
-    next.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(0.25).play();
+    next.reset();
+    next.setLoop(THREE.LoopRepeat, Infinity);
+    next.clampWhenFinished = false;
+    next.setEffectiveTimeScale(1);
+    next.setEffectiveWeight(1);
+    next.fadeIn(0.2).play();
     this.currentAction = next;
   }
 
@@ -156,12 +195,58 @@ class PersonAgent {
     this.distance = p.distance || 0;
     this.lastSeen = performance.now();
 
-    // 死区：噪声引起的原地抖动不改目标；真正走出一段距离才更新
-    const jump = this._rawTarget.distanceTo(this.target);
-    const apiMoving =
-      this.speed >= IDLE_SPEED && this.direction !== "stationary";
-    if (jump >= POS_DEADZONE || (apiMoving && jump >= ARRIVE_EPS)) {
+    if (!this._initialized) {
       this.target.copy(this._rawTarget);
+      this.smooth.copy(this._rawTarget);
+      this._prevSmooth.copy(this._rawTarget);
+      this._prevRaw.copy(this._rawTarget);
+      this.group.position.copy(this.smooth);
+      this._initialized = true;
+    } else {
+      const dx = this._rawTarget.x - this._prevRaw.x;
+      const dz = this._rawTarget.z - this._prevRaw.z;
+      const rawJump = Math.hypot(dx, dz);
+      this._prevRaw.copy(this._rawTarget);
+
+      if (rawJump >= 0.04 || this.speed >= IDLE_SPEED) {
+        this._locoUntil = performance.now() + 500;
+      }
+
+      // 用检测点真实位移更新行进方向（比追赶偏移更稳，避免个别人朝向反了）
+      if (rawJump >= TRAVEL_MIN_STEP) {
+        const ndx = dx / rawJump;
+        const ndz = dz / rawJump;
+        if (!this._travelValid) {
+          this._travelX = ndx;
+          this._travelZ = ndz;
+          this._travelValid = true;
+          this.heading = Math.atan2(ndx, ndz);
+          this.group.rotation.y = this.heading;
+        } else {
+          const align = this._travelX * ndx + this._travelZ * ndz;
+          if (align > -0.15) {
+            const a = TRAVEL_DIR_ALPHA;
+            this._travelX = this._travelX * (1 - a) + ndx * a;
+            this._travelZ = this._travelZ * (1 - a) + ndz * a;
+            const len = Math.hypot(this._travelX, this._travelZ) || 1;
+            this._travelX /= len;
+            this._travelZ /= len;
+          } else {
+            // 疑似掉头：慢一点混入，避免噪声瞬间反向
+            const a = 0.15;
+            this._travelX = this._travelX * (1 - a) + ndx * a;
+            this._travelZ = this._travelZ * (1 - a) + ndz * a;
+            const len = Math.hypot(this._travelX, this._travelZ) || 1;
+            this._travelX /= len;
+            this._travelZ /= len;
+          }
+        }
+      }
+
+      const jump = this._rawTarget.distanceTo(this.target);
+      if (jump >= POS_DEADZONE) {
+        this.target.lerp(this._rawTarget, 0.55);
+      }
     }
 
     const color = DIR_COLORS[this.direction] ?? DIR_COLORS.unknown;
@@ -172,74 +257,116 @@ class PersonAgent {
     el.textContent = `#${this.personId}  x:${this.camX.toFixed(1)}  y:${this.camY.toFixed(1)}`;
   }
 
-  tick(dt) {
-    const offsetX = this.target.x - this.smooth.x;
-    const offsetZ = this.target.z - this.smooth.z;
-    const dist = Math.hypot(offsetX, offsetZ);
-    const apiMoving =
-      this.speed >= IDLE_SPEED && this.direction !== "stationary";
+  _angleDiff(a, b) {
+    let d = a - b;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return d;
+  }
 
-    // 已到达且检测判定静止 → 站住播 Idle，避免原地踏步
-    if (dist < ARRIVE_EPS && !apiMoving) {
-      this._moving = false;
-      this.displaySpeed = 0;
-      this._play("Idle");
+  _updateHeading(desired, now) {
+    const diff = Math.abs(this._angleDiff(desired, this.heading));
+    if (diff < HEADING_SNAP_RAD) {
+      this.heading = desired;
+      this._pendingHeading = null;
+      this._pendingSince = 0;
+      return;
+    }
+    const needMs = diff > Math.PI * 0.6 ? HEADING_FLIP_MS : HEADING_TURN_MS;
+    if (
+      this._pendingHeading == null ||
+      Math.abs(this._angleDiff(desired, this._pendingHeading)) > Math.PI / 4
+    ) {
+      this._pendingHeading = desired;
+      this._pendingSince = now;
+      return;
+    }
+    if (now - this._pendingSince >= needMs) {
+      this.heading = desired;
+      this._pendingHeading = null;
+      this._pendingSince = 0;
+    }
+  }
+
+  tick(dt) {
+    if (!this._initialized) {
       this.mixer.update(dt);
-      this.group.position.copy(this.smooth);
       return;
     }
 
-    if (dist >= ARRIVE_EPS) {
-      this.heading = Math.atan2(offsetX, offsetZ);
+    this.target.x += (this._rawTarget.x - this.target.x) * Math.min(1, TARGET_FOLLOW * dt);
+    this.target.z += (this._rawTarget.z - this.target.z) * Math.min(1, TARGET_FOLLOW * dt);
 
-      // 按真实位移走路：速度取检测速度，过小则用步行速度追上目标
+    const offsetX = this.target.x - this.smooth.x;
+    const offsetZ = this.target.z - this.smooth.z;
+    const dist = Math.hypot(offsetX, offsetZ);
+
+    this._prevSmooth.copy(this.smooth);
+
+    const now = performance.now();
+    const locoActive = now < this._locoUntil;
+    const shouldWalk = dist > WALK_STOP_DIST || locoActive;
+
+    if (shouldWalk) {
+      this._walking = true;
       let v = this.speed;
-      if (v < IDLE_SPEED) {
-        v = Math.min(WALK_PACE, dist * 2);
-      }
-      v = THREE.MathUtils.clamp(v, 0.5, 4.5);
+      if (!(v >= MIN_CHASE_SPEED)) v = WALK_PACE;
+      v = THREE.MathUtils.clamp(v, MIN_CHASE_SPEED, 4.5);
+      if (dist > 2.5) v = Math.max(v, Math.min(dist * 0.6, 3.2));
 
-      const step = Math.min(dist, v * dt);
-      const inv = 1 / dist;
-      this.smooth.x += offsetX * inv * step;
-      this.smooth.z += offsetZ * inv * step;
+      if (dist > 0.02) {
+        const step = Math.min(dist, v * dt);
+        const inv = 1 / dist;
+        this.smooth.x += offsetX * inv * step;
+        this.smooth.z += offsetZ * inv * step;
+      }
       this.displaySpeed = v;
       this._moving = true;
     } else {
-      this.displaySpeed = this.speed;
-      this._moving = apiMoving;
+      this.smooth.x = this.target.x;
+      this.smooth.z = this.target.z;
+      this.displaySpeed = 0;
+      this._moving = false;
+      this._walking = false;
+    }
+
+    // 朝向优先用检测行进方向；仅在尚无行进样本且离目标较远时用追赶偏移兜底
+    if (this._walking) {
+      if (this._travelValid) {
+        this._updateHeading(Math.atan2(this._travelX, this._travelZ), now);
+      } else if (dist >= HEADING_FALLBACK_DIST) {
+        this._updateHeading(Math.atan2(offsetX, offsetZ), now);
+      }
     }
 
     const curY = this.group.rotation.y;
-    let diff = this.heading - curY;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    this.group.rotation.y = curY + diff * Math.min(1, 8 * dt);
-
+    const diff = this._angleDiff(this.heading, curY);
+    this.group.rotation.y = curY + diff * Math.min(1, HEADING_TURN * dt);
     this.group.position.copy(this.smooth);
 
-    if (!this._moving || this.displaySpeed < IDLE_SPEED) {
-      this._play("Idle");
-    } else if (this.displaySpeed >= RUN_SPEED) {
-      this._play("Run");
-      if (this.currentAction) {
-        this.currentAction.setEffectiveTimeScale(
-          THREE.MathUtils.clamp(this.displaySpeed / 3.5, 0.8, 1.6),
-        );
+    if (this._walking) {
+      if (this.displaySpeed >= RUN_SPEED) {
+        this._play("Run");
+        if (this.currentAction) {
+          this.currentAction.setEffectiveTimeScale(
+            THREE.MathUtils.clamp(this.displaySpeed / 3.5, 0.9, 1.5),
+          );
+        }
+      } else {
+        this._play("Walk");
+        if (this.currentAction) {
+          this.currentAction.setEffectiveTimeScale(
+            THREE.MathUtils.clamp(this.displaySpeed / WALK_PACE, 0.9, 1.3),
+          );
+        }
       }
     } else {
-      this._play("Walk");
-      if (this.currentAction) {
-        // 步频与地面位移速度对齐，避免“腿在走、人在原地晃”
-        this.currentAction.setEffectiveTimeScale(
-          THREE.MathUtils.clamp(this.displaySpeed / WALK_PACE, 0.7, 1.6),
-        );
-      }
+      this._play("Idle");
     }
 
     this.mixer.update(dt);
 
-    if (this._moving) {
+    if (this._walking) {
       const last = this.trailPoints[this.trailPoints.length - 1];
       if (!last || last.distanceTo(this.smooth) > 0.35) {
         this.trailPoints.push(this.smooth.clone());
@@ -279,76 +406,10 @@ function hideError() {
 
 function resetCamera() {
   if (!camera || !controls) return;
-  // 站在摄像头后方稍高处，沿主视野看向场景深处（与监控画面同向）
+  // 站在原点后方稍高处，沿 +Y（世界 +Z）看向场景深处
   camera.position.set(0, 8, -6);
   controls.target.set(0, 0, 12);
   controls.update();
-}
-
-function buildCctvCamera() {
-  const group = new THREE.Group();
-  group.name = "cctv";
-
-  const pole = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.08, 0.1, 3.2, 10),
-    new THREE.MeshStandardMaterial({ color: 0x4b5563 }),
-  );
-  pole.position.y = 1.6;
-  group.add(pole);
-
-  const head = new THREE.Mesh(
-    new THREE.BoxGeometry(0.45, 0.35, 0.7),
-    new THREE.MeshStandardMaterial({ color: 0xf59e0b, emissive: 0xf59e0b, emissiveIntensity: 0.25 }),
-  );
-  head.position.set(0, 3.2, 0.15);
-  group.add(head);
-
-  const lens = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.12, 0.14, 0.2, 16),
-    new THREE.MeshStandardMaterial({ color: 0x111827 }),
-  );
-  lens.rotation.x = Math.PI / 2;
-  lens.position.set(0, 3.2, 0.55);
-  group.add(lens);
-
-  // 视野锥：沿 +Z（标定 ground_y / 距摄像头方向）
-  const fov = 50 * (Math.PI / 180);
-  const aspect = 16 / 9;
-  const nearH = 0.4;
-  const farDist = 18;
-  const nearW = nearH * aspect;
-  const farH = 2 * Math.tan(fov / 2) * farDist;
-  const farW = farH * aspect;
-  const origin = new THREE.Vector3(0, 3.2, 0.55);
-
-  const corners = [
-    new THREE.Vector3(-farW / 2, 3.2 + farH / 2, farDist),
-    new THREE.Vector3(farW / 2, 3.2 + farH / 2, farDist),
-    new THREE.Vector3(farW / 2, 3.2 - farH / 2, farDist),
-    new THREE.Vector3(-farW / 2, 3.2 - farH / 2, farDist),
-  ];
-  const fringe = [];
-  for (const c of corners) {
-    fringe.push(origin, c);
-  }
-  fringe.push(corners[0], corners[1], corners[1], corners[2], corners[2], corners[3], corners[3], corners[0]);
-  const fringeGeom = new THREE.BufferGeometry().setFromPoints(fringe);
-  const fringeLine = new THREE.LineSegments(
-    fringeGeom,
-    new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.55 }),
-  );
-  group.add(fringeLine);
-
-  const labelEl = document.createElement("div");
-  labelEl.className = "person-label";
-  labelEl.style.borderColor = "rgba(245, 158, 11, 0.8)";
-  labelEl.style.color = "#fbbf24";
-  labelEl.textContent = "摄像头 O";
-  const label = new CSS2DObject(labelEl);
-  label.position.set(0, 3.8, 0);
-  group.add(label);
-
-  scene.add(group);
 }
 
 function makeAxisLabel(text, color, x, y, z) {
@@ -386,7 +447,7 @@ function buildGround() {
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // 摄像头地面直角坐标轴：X 横向、Y 纵深（映射到 Three +Z）
+  // 标定地面坐标轴：X 横向（场景中取反）、Y 纵深（映射到 Three +Z）
   const axisLines = new THREE.LineSegments(
     new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(-20, 0.04, 0),
@@ -398,11 +459,24 @@ function buildGround() {
   );
   scene.add(axisLines);
 
-  makeAxisLabel("cam X →", "#60a5fa", 8, 0.08, 0.5);
-  makeAxisLabel("← cam X", "#60a5fa", -8, 0.08, 0.5);
-  makeAxisLabel("cam Y →", "#fbbf24", 0.8, 0.08, 12);
+  // worldX = -ground_x，标签放在对应世界位置
+  makeAxisLabel("X+ →", "#60a5fa", -8, 0.08, 0.5);
+  makeAxisLabel("← X-", "#60a5fa", 8, 0.08, 0.5);
+  makeAxisLabel("Y →", "#fbbf24", 0.8, 0.08, 12);
 
-  // 纵深刻度（摄像头相对 Y，不是极径 D）
+  // 原点标记
+  const originMark = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.35, 0.5, 32),
+    new THREE.MeshBasicMaterial({ color: 0xf97316, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  originMark.add(ring);
+  makeAxisLabel("O", "#f97316", 0, 0.15, -1.2);
+  scene.add(originMark);
+
+  // 纵深刻度
   for (const y of [5, 10, 15, 20, 30]) {
     makeAxisLabel(`y=${y}m`, "#8b9cb3", 1.2, 0.06, y);
     const tick = new THREE.Mesh(
@@ -413,18 +487,17 @@ function buildGround() {
     scene.add(tick);
   }
 
-  // 横向刻度
+  // 横向刻度（世界位置 = -标定 x）
   for (const x of [-10, -5, 5, 10]) {
-    makeAxisLabel(`x=${x}`, "#8b9cb3", x, 0.06, 1.5);
+    const wx = -x;
+    makeAxisLabel(`x=${x}`, "#8b9cb3", wx, 0.06, 1.5);
     const tick = new THREE.Mesh(
       new THREE.BoxGeometry(0.06, 0.02, 1.2),
       new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.7 }),
     );
-    tick.position.set(x, 0.03, 0);
+    tick.position.set(wx, 0.03, 0);
     scene.add(tick);
   }
-
-  buildCctvCamera();
 
   const axis = new THREE.AxesHelper(3);
   axis.position.y = 0.05;
@@ -469,7 +542,14 @@ function initScene() {
   labelRenderer.domElement.style.position = "absolute";
   labelRenderer.domElement.style.inset = "0";
   labelRenderer.domElement.style.pointerEvents = "none";
+  labelRenderer.domElement.style.zIndex = "2";
   viewport.appendChild(labelRenderer.domElement);
+
+  // 确保画中画始终在 canvas / label 之上，可点击放大
+  if (videoPipWrap) {
+    viewport.appendChild(videoPipWrap);
+    videoPipWrap.style.zIndex = "30";
+  }
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0, 12);
@@ -529,7 +609,7 @@ function animate() {
       }
     }
     if (nearest) {
-      // 保持从摄像头方向观察：目标点跟随人员，相机在其后方
+      // 跟随：目标点跟随人员，观察相机在其后方
       const t = controls.target;
       t.lerp(new THREE.Vector3(nearest.smooth.x, 1.2, nearest.smooth.z), 0.06);
       const desired = new THREE.Vector3(nearest.smooth.x * 0.3, 7, Math.min(nearest.smooth.z - 10, -2));
@@ -553,6 +633,9 @@ function syncAgents(persons) {
       toWorldPos(p.ground_x, p.ground_y, agent.smooth);
       agent.target.copy(agent.smooth);
       agent._rawTarget.copy(agent.smooth);
+      agent._prevRaw.copy(agent.smooth);
+      agent.group.position.copy(agent.smooth);
+      agent._initialized = true;
       agents.set(p.person_id, agent);
     }
     agent.updateFromApi(p);
@@ -583,7 +666,7 @@ function renderPersonList(persons) {
     li.innerHTML = `
       <span class="label" style="color:${color}">#${p.person_id}</span>
       <span class="meta">
-        摄像头坐标 <strong>x=${p.ground_x}</strong>, <strong>y=${p.ground_y}</strong> m<br>
+        相对原点 <strong>x=${p.ground_x}</strong>, <strong>y=${p.ground_y}</strong> m<br>
         速度 ${p.speed} m/s · ${dir}
       </span>
     `;
@@ -700,7 +783,8 @@ async function startDetection() {
     detectBadge.textContent = "连接中…";
     detectBadge.className = "badge ok";
     videoPip.src = `/api/detect/stream?t=${Date.now()}`;
-    videoPip.hidden = false;
+    videoPipWrap.hidden = false;
+    videoPipWrap.classList.remove("expanded");
     connectWebSocket();
     resetCamera();
   } catch (e) {
@@ -714,7 +798,8 @@ async function stopDetection() {
   disconnectWebSocket(true);
   await fetch("/api/detect/stop", { method: "POST" });
   videoPip.src = "";
-  videoPip.hidden = true;
+  videoPipWrap.hidden = true;
+  videoPipWrap.classList.remove("expanded");
   startBtn.disabled = false;
   stopBtn.disabled = true;
   detectBadge.textContent = "已停止";
@@ -724,11 +809,29 @@ async function stopDetection() {
   personList.innerHTML = '<li class="point-item" style="color:var(--text-muted)">暂无检测</li>';
 }
 
+function toggleVideoPipSize(e) {
+  e?.preventDefault?.();
+  e?.stopPropagation?.();
+  if (!videoPipWrap || videoPipWrap.hidden) return;
+  const expanded = videoPipWrap.classList.toggle("expanded");
+  if (videoPipToggle) {
+    videoPipToggle.textContent = expanded ? "⤡" : "⤢";
+    videoPipToggle.title = expanded ? "缩小" : "放大";
+  }
+}
+
 startBtn.addEventListener("click", startDetection);
 stopBtn.addEventListener("click", stopDetection);
 resetCamBtn.addEventListener("click", resetCamera);
 clearTrailBtn.addEventListener("click", clearAllTrails);
-mirrorX?.addEventListener("change", () => {
-  // 镜像切换后清空轨迹，避免旧路径错位
-  clearAllTrails();
+videoPipWrap?.addEventListener("click", toggleVideoPipSize);
+videoPipToggle?.addEventListener("click", toggleVideoPipSize);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && videoPipWrap?.classList.contains("expanded")) {
+    videoPipWrap.classList.remove("expanded");
+    if (videoPipToggle) {
+      videoPipToggle.textContent = "⤢";
+      videoPipToggle.title = "放大";
+    }
+  }
 });
