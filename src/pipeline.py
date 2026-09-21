@@ -7,6 +7,7 @@ from pathlib import Path
 import cv2
 import yaml
 
+from src.clothing_color import AppearanceTracker
 from src.detector import PersonDetectorTracker
 from src.homography import HomographyTransformer
 from src.motion_analyzer import MotionAnalyzer
@@ -67,6 +68,7 @@ class DetectionPipeline:
         self.origin_px, self.origin_py = load_camera_origin_pixel(
             homography_path, self.transformer,
         )
+        self.appearance = AppearanceTracker()
 
     def process_frame(self, frame, timestamp: float | None = None) -> tuple[list, list]:
         now = timestamp or time.time()
@@ -84,13 +86,20 @@ class DetectionPipeline:
                 bbox=det.bbox,
                 timestamp=now,
             )
+            # 标注画上去之前截框，贴图里才是衣服本身的颜色
+            self.appearance.observe(det.person_id, frame, det.bbox, timestamp=now)
             states.append(state)
 
         self.analyzer.remove_stale_tracks()
+        self.appearance.retain(self.analyzer.tracks.keys())
 
         draw_camera_marker(frame, self.origin_px, self.origin_py)
         for state in states:
             draw_person_info(frame, state)
 
-        events = [self.analyzer.to_dict(s) for s in states]
+        events = []
+        for state in states:
+            event = self.analyzer.to_dict(state)
+            event["has_appearance"] = self.appearance.has(state.person_id)
+            events.append(event)
         return states, events

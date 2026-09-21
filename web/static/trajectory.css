@@ -25,6 +25,15 @@
   overflow: hidden;
 }
 
+.appearance-thumb {
+  width: 28px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #1a2332;
+  flex-shrink: 0;
+}
+
 .viewport canvas {
   display: block;
   position: absolute;

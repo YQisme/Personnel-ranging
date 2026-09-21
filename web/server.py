@@ -225,6 +225,22 @@ async def detect_status():
     return _detection_service.get_status()
 
 
+@app.get("/api/detect/appearance/{person_id}")
+async def detect_appearance(person_id: int):
+    """返回该跟踪 ID 锁定的人体框贴图。"""
+    pipeline = None if _detection_service is None else _detection_service.pipeline
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="检测未运行")
+    jpg = pipeline.appearance.get(person_id)
+    if not jpg:
+        raise HTTPException(status_code=404, detail="尚无贴图")
+    return Response(
+        content=jpg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/detect/stream")
 async def detect_stream():
     homography_path = resolve_homography_path(str(CONFIG_PATH))

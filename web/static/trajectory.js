@@ -84,6 +84,7 @@ const resetCamBtn = document.getElementById("resetCamBtn");
 const clearTrailBtn = document.getElementById("clearTrailBtn");
 const followCam = document.getElementById("followCam");
 const showCoords = document.getElementById("showCoords");
+const appearanceToggle = document.getElementById("appearanceToggle");
 const videoPip = document.getElementById("videoPip");
 const videoPipWrap = document.getElementById("videoPipWrap");
 const videoPipToggle = document.getElementById("videoPipToggle");
@@ -100,9 +101,65 @@ let wsWanted = false;
 let wsReconnectTimer = null;
 let animFrameId = null;
 let sceneReady = false;
+/** 最近一帧人员，供开关切换时刷新列表 */
+let latestPersons = null;
 
 /** @type {Map<number, PersonAgent>} */
 const agents = new Map();
+
+/**
+ * 用绑定姿势的正面投影采样人体框贴图。
+ * 躯干、头、腿按身高对齐画面；T 字伸开的手臂改到画面两侧的袖子区域。
+ */
+function installAppearanceProjection(material, texture) {
+  material.map = texture;
+  material.color.set(0xffffff);
+  material.metalness = 0;
+  material.roughness = 0.84;
+  material.emissive.set(0x000000);
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <uv_pars_vertex>",
+        "#include <uv_pars_vertex>\nvarying vec3 vBindPos;",
+      )
+      .replace(
+        "#include <uv_vertex>",
+        "#include <uv_vertex>\nvBindPos = position;",
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <uv_pars_fragment>",
+        "#include <uv_pars_fragment>\nvarying vec3 vBindPos;",
+      )
+      .replace(
+        "#include <map_fragment>",
+        `
+        vec3 bp = vBindPos;
+        float ax = abs(bp.x);
+        float u;
+        float v;
+        if (bp.y > 1.28 && bp.y < 1.56 && ax > 0.28) {
+          float along = clamp((ax - 0.22) / 0.68, 0.0, 1.0);
+          v = mix(0.80, 0.42, along);
+          float side = bp.x < 0.0 ? 0.16 : 0.84;
+          u = clamp(side + (bp.y - 1.42) * 0.40, side - 0.07, side + 0.07);
+        } else {
+          u = clamp(0.5 + bp.x * 0.55, 0.30, 0.70);
+          v = clamp(bp.y / 1.82, 0.0, 1.0);
+        }
+        vec4 sampledDiffuseColor = texture2D(map, vec2(u, v));
+        diffuseColor *= sampledDiffuseColor;
+        `,
+      );
+  };
+  material.customProgramCacheKey = () => "appearance-map";
+  material.needsUpdate = true;
+}
+
+function appearanceEnabled() {
+  return !!appearanceToggle?.checked;
+}
 
 class PersonAgent {
   constructor(personId, template, animations) {
@@ -111,6 +168,9 @@ class PersonAgent {
     this.group.name = `person_${personId}`;
 
     this._materials = [];
+    this._materialDefaults = [];
+    this._appearanceApplied = false;
+    this._hasAppearance = false;
     this.model = cloneSkinned(template);
     this.model.traverse((obj) => {
       if (obj.isMesh) {
@@ -124,6 +184,12 @@ class PersonAgent {
             c.opacity = 0;
             c.depthWrite = c.opacity >= 0.99;
             this._materials.push(c);
+            this._materialDefaults.push({
+              color: c.color.getHex(),
+              metalness: c.metalness,
+              roughness: c.roughness,
+              emissive: c.emissive.getHex(),
+            });
             return c;
           });
           obj.material = Array.isArray(obj.material) ? cloned : cloned[0];
@@ -174,6 +240,9 @@ class PersonAgent {
     this.life = "spawning";
     this._fade = 0;
     this._disposed = false;
+    this._appearanceTex = null;
+    this._appearanceLoading = false;
+    this._appearanceTries = 0;
 
     this.trailGeom = new THREE.BufferGeometry();
     this.trailMat = new THREE.LineBasicMaterial({
@@ -311,6 +380,7 @@ class PersonAgent {
     this.direction = p.direction || "unknown";
     this.distance = p.distance || 0;
     this.lastSeen = performance.now();
+    this._loadAppearance(p);
 
     if (this.life === "exiting") {
       this.cancelExit();
@@ -553,6 +623,74 @@ class PersonAgent {
     this.trailGeom.setFromPoints([]);
   }
 
+  _loadAppearance(p) {
+    this._hasAppearance = !!p.has_appearance;
+    if (!appearanceEnabled()) return;
+    if (!this._hasAppearance || this._appearanceTex || this._appearanceLoading) return;
+    if (this._appearanceTries >= 3) return;
+    this._appearanceLoading = true;
+    this._appearanceTries += 1;
+    const url = `/api/detect/appearance/${this.personId}?t=${this._appearanceTries}`;
+    new THREE.TextureLoader().load(
+      url,
+      (tex) => {
+        this._appearanceLoading = false;
+        if (this._disposed) {
+          tex.dispose();
+          return;
+        }
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.needsUpdate = true;
+        this._appearanceTex = tex;
+        if (appearanceEnabled()) this._applyAppearance();
+      },
+      undefined,
+      () => {
+        this._appearanceLoading = false;
+      },
+    );
+  }
+
+  _applyAppearance() {
+    if (!this._appearanceTex) return;
+    for (const mat of this._materials) {
+      installAppearanceProjection(mat, this._appearanceTex);
+    }
+    this._appearanceApplied = true;
+  }
+
+  _restoreMaterials() {
+    if (!this._appearanceApplied) return;
+    this._materials.forEach((mat, index) => {
+      const saved = this._materialDefaults[index];
+      mat.map = null;
+      mat.color.setHex(saved.color);
+      mat.metalness = saved.metalness;
+      mat.roughness = saved.roughness;
+      mat.emissive.setHex(saved.emissive);
+      mat.onBeforeCompile = () => {};
+      mat.customProgramCacheKey = () => "appearance-off";
+      mat.needsUpdate = true;
+    });
+    this._appearanceApplied = false;
+  }
+
+  setAppearanceEnabled(enabled) {
+    if (!enabled) {
+      this._restoreMaterials();
+      return;
+    }
+    if (this._appearanceTex) {
+      this._applyAppearance();
+      return;
+    }
+    if (!this._hasAppearance) return;
+    this._appearanceTries = 0;
+    this._loadAppearance({ has_appearance: true });
+  }
+
   dispose() {
     if (this._disposed) return;
     this._disposed = true;
@@ -561,6 +699,10 @@ class PersonAgent {
     scene.remove(this.trailLine);
     this.trailGeom.dispose();
     this.trailMat.dispose();
+    if (this._appearanceTex) {
+      this._appearanceTex.dispose();
+      this._appearanceTex = null;
+    }
     this.mixer.stopAllAction();
     if (this.label?.element?.parentNode) {
       this.label.element.parentNode.removeChild(this.label.element);
@@ -842,7 +984,11 @@ function renderPersonList(persons) {
     const li = document.createElement("li");
     li.className = "point-item";
     const dir = DIRECTION_LABELS[p.direction] || p.direction;
+    const thumb = appearanceEnabled() && p.has_appearance
+      ? `<img class="appearance-thumb" src="/api/detect/appearance/${p.person_id}" alt="" />`
+      : "";
     li.innerHTML = `
+      ${thumb}
       <span class="label">#${p.person_id}</span>
       <span class="meta">
         相对原点 <strong>x=${p.ground_x}</strong>, <strong>y=${p.ground_y}</strong> m<br>
@@ -856,6 +1002,7 @@ function renderPersonList(persons) {
 function applyStatus(data) {
   fpsBadge.textContent = `FPS: ${data.fps ?? "-"}`;
   const persons = data.persons || [];
+  latestPersons = persons;
   renderPersonList(persons);
   syncAgents(persons);
 
@@ -985,6 +1132,7 @@ async function stopDetection() {
   detectBadge.className = "badge";
   fpsBadge.textContent = "FPS: -";
   disposeAllAgents();
+  latestPersons = null;
   personList.innerHTML = '<li class="point-item" style="color:var(--text-muted)">暂无检测</li>';
 }
 
@@ -1003,6 +1151,13 @@ startBtn.addEventListener("click", startDetection);
 stopBtn.addEventListener("click", stopDetection);
 resetCamBtn.addEventListener("click", resetCamera);
 clearTrailBtn.addEventListener("click", clearAllTrails);
+appearanceToggle?.addEventListener("change", () => {
+  const enabled = appearanceEnabled();
+  for (const agent of agents.values()) {
+    agent.setAppearanceEnabled(enabled);
+  }
+  if (latestPersons) renderPersonList(latestPersons);
+});
 videoPipWrap?.addEventListener("click", toggleVideoPipSize);
 videoPipToggle?.addEventListener("click", toggleVideoPipSize);
 document.addEventListener("keydown", (e) => {
